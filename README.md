@@ -1,11 +1,11 @@
 # ATEM XML Editor
 
 > [!WARNING]
-> **Disclaimer:** This project contains some AI-generated code. It was built with the assistance of an AI coding agent. If AI generated project didn't match with your ideology, feel free to fork and modify it. This project is open-source and available under the GPL-3.0 license.
+> **Disclaimer:** This project contains some AI-generated code. It was built with the assistance of an AI coding agent. If an AI-generated project doesn't align with your preferences, feel free to fork and modify it. This project is open-source and available under the GPL-3.0 license.
 
 A sleek, visual web dashboard for editing Blackmagic Design ATEM switcher configuration (`.xml`) files. 
 
-If you dealt with many events you know how many ATEM switcher you need to config. But what if you didn't have access to the ATEM or you just want to create config for future event. This tool solves that by providing an intuitive, drag and drop web interface that reads your XML, lets you visually configure the switcher, and exports a perfectly formatted, ready-to-restore XML file.
+If you work with live events, you know how many ATEM switchers you need to configure. But what if you don't have access to the ATEM hardware, or you just want to create a configuration for a future event? This tool solves that by providing an intuitive, drag-and-drop web interface that reads your XML, lets you visually configure the switcher, and exports a perfectly formatted, ready-to-restore XML file.
 
 ## Features
 
@@ -23,7 +23,7 @@ If you dealt with many events you know how many ATEM switcher you need to config
 
 ## Getting Started
 
-To run this locally or deploy it to the web, we use a lightweight Node.js Express server. Or just try it now on https://atem-xml-editor.fly.dev/ !!
+To run this locally or deploy it to the web, we use a lightweight Node.js Express server. Alternatively, you can try it live at https://atem-xml-editor.fly.dev/!
 
 ### Local Development
 1. Install dependencies: `npm install`
