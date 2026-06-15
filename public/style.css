@@ -170,6 +170,41 @@ header {
   color: var(--accent);
 }
 
+.card-centered {
+  display: block;
+  margin: 30px auto;
+}
+
+.card-usage {
+  max-width: 600px;
+  border-left: 4px solid var(--accent);
+}
+
+.card-usage h3 {
+  color: var(--text-main);
+}
+
+.usage-list {
+  color: var(--text-muted);
+  line-height: 1.6;
+  padding-left: 20px;
+  margin-bottom: 0;
+  font-size: 0.95rem;
+}
+
+.usage-list strong {
+  color: var(--text-main);
+}
+
+.usage-list .accent-text {
+  color: var(--accent);
+}
+
+.card-connect {
+  max-width: 400px;
+  text-align: center;
+}
+
 .badge {
   background: #333;
   padding: 4px 8px;
