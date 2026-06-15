@@ -170,9 +170,18 @@ header {
   color: var(--accent);
 }
 
+.center-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
 .card-centered {
   display: block;
   margin: 30px auto;
+  width: fit-content;
+  text-align: left;
 }
 
 .card-usage {
