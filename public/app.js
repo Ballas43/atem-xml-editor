@@ -408,11 +408,13 @@ function updateXMLLabel(nodeType, id, attrName, newValue) {
   );
   if (node) {
     node.setAttribute(attrName, newValue);
-    if (nodeType === "Inputs") {
-      cacheInputNames(); // Refresh map for aux routing column headers
-    }
+    cacheInputNames(); // Refresh map for all names
+    
+    // Re-render dependent UI sections to reflect new names
+    buildAuxMatrix();
+    buildMultiview();
+    buildAudioMapping();
   }
-
 }
 
 // 2. Aux Crosspoint Matrix (Split into Inputs and Outputs)
