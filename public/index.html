@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATEM Config Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="app.js" defer></script>
+</head>
+
+<body>
+
+    <nav class="sidebar">
+        <div class="sidebar-header">ATEM XML Config</div>
+        <button class="nav-btn active" data-target="tab-overview">Overview</button>
+        <button class="nav-btn" id="nav-labels" data-target="tab-labels" disabled>Labels &amp; Routing</button>
+        <button class="nav-btn" id="nav-multiview" data-target="tab-multiview" disabled>Multiview</button>
+        <button class="nav-btn" id="nav-aux" data-target="tab-aux" disabled>Aux Routing</button>
+        <button class="nav-btn" id="nav-audio" data-target="tab-audio" disabled>Audio Mapping</button>
+
+        <div class="credit-footer">
+            <span>Made with ❤️ by</span>
+            <a href="https://instagram.com/timotius_austin43" target="_blank" rel="noopener noreferrer">
+                <img src="media/personal_logo.webp" alt="Timotius Austin Logo" class="credit-logo">
+            </a>
+        </div>
+    </nav>
+
+    <main>
+        <header>
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <div id="active-switcher-name" style="font-weight: 500; font-size: 1.1rem;">No XML Loaded</div>
+            </div>
+            <button class="export-btn" id="btn-export" onclick="exportXML()">Export XML</button>
+        </header>
+
+        <div class="content-area">
+
+            <div id="tab-overview" class="tab-panel active">
+                <div class="drop-zone" id="drop-zone">
+                    <h2>Drag &amp; Drop ATEM XML Here</h2>
+                    <p>Or click to browse files</p>
+                    <input type="file" id="file-input" accept=".xml" style="display:none;">
+                </div>
+
+
+
+                <div id="system-info" class="info-card" style="display:none;">
+                    <h3>Detected Hardware Schema</h3>
+                    <p><strong>Model:</strong> <span id="info-model" style="color:white;"></span></p>
+                    <p><strong>Architecture Tier:</strong> <span id="info-tier" style="color:white;"></span></p>
+                    <p><strong>Generation:</strong> <span id="info-generation" style="color:white;"></span></p>
+                    <p><strong>Audio Engine:</strong> <span id="info-audio" style="color:white;"></span></p>
+                    <p><strong>SuperSource Count:</strong> <span id="info-ssrc-count" style="color:white;"></span></p>
+                    <p><strong>Multiview Count:</strong> <span id="info-mv-count" style="color:white;"></span></p>
+                    <p><strong>MV Layout Type:</strong> <span id="info-mv-layout" style="color:white;"></span></p>
+                    <div style="margin-top: 15px;">
+                        <span class="badge" id="badge-ssrc">SuperSource</span>
+                        <span class="badge" id="badge-fairlight">Fairlight Audio</span>
+                        <span class="badge" id="badge-madi">MADI</span>
+                        <span class="badge" id="badge-iso">Record ISO</span>
+                        <span class="badge" id="badge-net">Network Ingest</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-labels" class="tab-panel">
+                <div class="sub-tab-bar">
+                    <button class="sub-tab-btn active" onclick="switchSubTab(this, 'panel-inputs')">Inputs</button>
+                    <button class="sub-tab-btn" onclick="switchSubTab(this, 'panel-outputs')">Outputs</button>
+                </div>
+
+                <div id="panel-inputs" class="sub-panel active">
+                    <p style="color:var(--text-muted); margin-bottom: 20px;">Edit Input Short (4 chars) and Long names.
+                        Changes write directly to the XML DOM.</p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 8%;">ID</th>
+                                <th style="width: 35%;">Long Name</th>
+                                <th style="width: 35%;">Short Name (4 Chars)</th>
+                                <th style="width: 22%;">Audio</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inputs-table-body"></tbody>
+                    </table>
+                </div>
+
+                <div id="panel-outputs" class="sub-panel">
+                    <p style="color:var(--text-muted); margin-bottom: 20px;">Edit names for Outputs (Auxiliaries, Clean
+                        Feeds, M/E out, etc.).</p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 10%;">ID</th>
+                                <th style="width: 45%;">Long Name</th>
+                                <th style="width: 45%;">Short Name (4 Chars)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="outputs-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="tab-multiview" class="tab-panel">
+                <h2>Multiview Configuration</h2>
+                <p style="color:var(--text-muted)">Select a multiview output to inspect and configure its window
+                    assignments.</p>
+                <div class="mv-tab-bar" id="mv-tab-bar">
+                </div>
+                <div id="mv-panels-container">
+                </div>
+            </div>
+
+            <div id="tab-aux" class="tab-panel">
+                <div class="sub-tab-bar">
+                    <button class="sub-tab-btn active" onclick="switchSubTab(this, 'panel-aux-inputs')">Route
+                        Inputs</button>
+                    <button class="sub-tab-btn" onclick="switchSubTab(this, 'panel-aux-outputs')">Route Outputs</button>
+                </div>
+
+                <div id="panel-aux-inputs" class="sub-panel active">
+                    <p style="color:var(--text-muted); margin-bottom: 20px;">Patch physical and virtual inputs directly
+                        to Auxiliaries.</p>
+                    <div class="matrix-container">
+                        <table class="cp-table" id="aux-inputs-matrix-table"></table>
+                    </div>
+                </div>
+
+                <div id="panel-aux-outputs" class="sub-panel">
+                    <p style="color:var(--text-muted); margin-bottom: 20px;">Patch internal outputs (M/E Program, Clean
+                        Feeds, SuperSource) to Auxiliaries.</p>
+                    <div class="matrix-container">
+                        <table class="cp-table" id="aux-outputs-matrix-table"></table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 5: AUDIO MAPPING -->
+            <div id="tab-audio" class="tab-panel">
+                <h2>Audio Output Mapping</h2>
+                <p style="color:var(--text-muted); margin-bottom: 20px;">Configure audio source routing for each
+                    physical output. Available on Constellation-class switchers with Fairlight audio and MADI support.
+                </p>
+                <div class="audio-output-tabs" id="audio-output-tabs">
+                    <!-- Populated by JS -->
+                </div>
+                <div id="audio-panels-container">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+        </div>
+    </main>
+    <dialog id="mv-modal"
+        style="background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; color: var(--text-main); padding: 20px; width: 350px;">
+        <h3 style="margin-top: 0; color: var(--accent);">Route Multiview Window</h3>
+        <p id="mv-modal-target" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;"></p>
+
+        <select id="mv-source-select"
+            style="width: 100%; padding: 10px; background: var(--bg-dark); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px; margin-bottom: 20px; outline: none; font-size: 1rem;">
+        </select>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button onclick="document.getElementById('mv-modal').close()"
+                style="background: transparent; border: 1px solid var(--border); color: var(--text-main); padding: 8px 16px; border-radius: 4px; cursor: pointer;">Cancel</button>
+            <button onclick="saveMultiviewSource()"
+                style="background: var(--accent); border: none; color: white; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">Route
+                Source</button>
+        </div>
+    </dialog>
+    <style>
+        dialog::backdrop {
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(2px);
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+    </style>
+</body>
+
+</html>
