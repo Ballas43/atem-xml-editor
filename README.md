@@ -1,7 +1,7 @@
 # ATEM XML Editor
 
 > [!WARNING]
-> **Disclaimer:** This project contains some AI-generated code. It was built with the assistance of an AI coding agent. If an AI-generated project doesn't align with your preferences, feel free to fork and modify it. This project is open-source and available under the GPL-3.0 license.
+> **Disclaimer:** This project contains some AI-generated code. It was built with the assistance of an AI coding agent. If an AI-generated project doesn't align with your preferences, feel free to fork and modify it. This project is open-source and available under the MIT license.
 
 A sleek, visual web dashboard for editing Blackmagic Design ATEM switcher configuration (`.xml`) files. 
 
@@ -53,3 +53,9 @@ Pull requests are welcome! If you are adding support for a new ATEM feature:
 1. Ensure that the logic safely checks for the presence of the feature before rendering (e.g., checking if the switcher belongs to the ATEM Mini family before offering specific Multiview routing options).
 2. Avoid using innerHTML inside loops when generating large tables to prevent O(N²) DOM reflow bottlenecks.
 3. Use the `escapeHTML` utility when inserting user-defined labels to prevent UI breaking.
+
+---
+
+## Legal
+
+> **Disclaimer:** This project is an independent, open-source tool. It is not affiliated with, endorsed by, sponsored by, or associated with Blackmagic Design. "ATEM" and "Blackmagic Design" are trademarks of Blackmagic Design Pty. Ltd.

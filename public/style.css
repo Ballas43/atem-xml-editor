@@ -928,14 +928,24 @@ input[type="text"]:focus {
   text-align: center;
   font-size: 0.85rem;
   color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+
+.credit-link {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  border-top: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+  transition: 0.2s;
 }
 
-.credit-footer span {
+.credit-link:hover {
+  color: var(--text-main);
+}
+
+.credit-link span {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -949,7 +959,7 @@ input[type="text"]:focus {
   transition: 0.2s;
 }
 
-.credit-logo:hover {
+.credit-link:hover .credit-logo {
   opacity: 1;
   transform: scale(1.2); /* Slightly larger pop on hover for smaller icon */
 }
@@ -1014,10 +1024,13 @@ input[type="text"]:focus {
     bottom: 0;
     left: 0;
     width: 100%;
-    flex-direction: row;
-    justify-content: center;
     background: var(--bg-panel);
     z-index: 10;
     padding: 10px;
+  }
+
+  .credit-link {
+    flex-direction: row;
+    justify-content: center;
   }
 }
