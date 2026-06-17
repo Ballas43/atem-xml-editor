@@ -926,42 +926,39 @@ input[type="text"]:focus {
   margin-top: auto;
   padding: 20px;
   text-align: center;
-  font-size: 0.85rem;
-  color: var(--text-muted);
   border-top: 1px solid var(--border);
 }
 
 .credit-link {
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 5px;
   text-decoration: none;
-  color: inherit;
-  transition: 0.2s;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: background-color 0.2s, color 0.2s;
+  font-size: 0.85rem;
 }
 
 .credit-link:hover {
+  background-color: rgba(255, 255, 255, 0.05);
   color: var(--text-main);
-}
-
-.credit-link span {
-  display: flex;
-  align-items: center;
-  gap: 5px;
 }
 
 .credit-logo {
   height: 1.2em;
   width: auto;
   vertical-align: middle;
+  border-radius: 4px;
   opacity: 0.8;
   transition: 0.2s;
 }
 
 .credit-link:hover .credit-logo {
   opacity: 1;
-  transform: scale(1.2); /* Slightly larger pop on hover for smaller icon */
+  transform: scale(1.1);
 }
 
 /* --- RESPONSIVE DESIGN (Mobile & Tablet) --- */
