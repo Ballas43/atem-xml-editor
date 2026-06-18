@@ -4,7 +4,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ATEM Config Dashboard</title>
+    <title>ATEM XML Configurator & Offline Editor</title>
+    <meta name="description"
+        content="A free visual, offline web-based ATEM XML editor for Blackmagic Design switchers. Easily configure labels, aux routing, Multiviews, and Fairlight audio mapping in your browser.">
+    <meta name="keywords"
+        content="ATEM offline editor, ATEM XML editor, Blackmagic ATEM config, ATEM switcher configuration, edit ATEM XML, ATEM multiview setup, ATEM audio mapping, ATEM software control alternative">
+    <meta name="author" content="Timotius Austin">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="ATEM XML Configurator & Offline Editor">
+    <meta property="og:description"
+        content="A free visual, offline web-based ATEM XML editor for Blackmagic Design switchers. Easily configure labels, aux routing, Multiviews, and Fairlight audio mapping.">
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:title" content="ATEM XML Configurator & Offline Editor">
+    <meta property="twitter:description"
+        content="A free visual, offline web-based ATEM XML editor for Blackmagic Design switchers. Easily configure labels, aux routing, Multiviews, and Fairlight audio mapping.">
+
     <link rel="stylesheet" href="style.css">
     <script src="app.js" defer></script>
 </head>
@@ -12,7 +30,7 @@
 <body>
 
     <nav class="sidebar">
-        <div class="sidebar-header">ATEM XML Config</div>
+        <h1 class="sidebar-header">ATEM XML Config</h1>
         <button class="nav-btn active" data-target="tab-overview">Overview</button>
         <button class="nav-btn" id="nav-labels" data-target="tab-labels" disabled>Labels &amp; Routing</button>
         <button class="nav-btn" id="nav-multiview" data-target="tab-multiview" disabled>Multiview</button>

@@ -38,6 +38,7 @@ nav.sidebar {
 }
 
 .sidebar-header {
+  margin: 0;
   padding: 20px;
   font-size: 1.2rem;
   font-weight: bold;
