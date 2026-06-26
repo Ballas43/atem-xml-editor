@@ -159,11 +159,13 @@ function analyzeATEMProfile(xmlDoc) {
     ? profileNode.getAttribute("product")
     : "Unknown ATEM";
 
+  const productUpper = appState.productName.toUpperCase();
+
   appState.hasAudioMapping =
     xmlDoc.querySelector("AudioMapping > AudioOutputs > Output") !== null ||
     xmlDoc.querySelector("AudioMapping AudioOutputs Output, AudioMapping > Output") !== null;
 
-  appState.audioEngine = (xmlDoc.querySelector("FairlightAudioMixer") || appState.hasAudioMapping || appState.productName.includes("Constellation") || appState.productName.includes("Extreme"))
+  appState.audioEngine = (xmlDoc.querySelector("FairlightAudioMixer") || appState.hasAudioMapping || productUpper.includes("CONSTELLATION") || productUpper.includes("EXTREME"))
     ? "fairlight"
     : "legacy";
   appState.hasFairlight = appState.audioEngine === "fairlight";
@@ -177,13 +179,20 @@ function analyzeATEMProfile(xmlDoc) {
     appState.xmlDoc.querySelector("AudioMapping AudioOutputs Output[name^='MADI'], AudioMapping Output[name^='MADI']") !== null;
   appState.hasNetworkIngest =
     xmlDoc.querySelector("StreamingInputs") !== null ||
-    appState.productName.includes("HD8");
+    productUpper.includes("HD8");
   appState.hasIso =
-    appState.productName.includes("ISO") ||
-    xmlDoc.querySelector("RecordAllInputs") !== null;
+    productUpper.includes("ISO") ||
+    productUpper.includes("ATEM SDI EXTREME") ||
+    productUpper.includes("ATEM SDI PRO") ||
+    xmlDoc.querySelector("RecordAllInputs") !== null ||
+    xmlDoc.querySelector("Record[recordAllISOInputs]") !== null;
   appState.hasStreamRecord =
     xmlDoc.querySelector("LiveStream") !== null ||
-    xmlDoc.querySelector("Record") !== null;
+    xmlDoc.querySelector("Record") !== null ||
+    appState.hasIso ||
+    productUpper.includes("MINI PRO") ||
+    productUpper.includes("EXTREME") ||
+    productUpper.includes("HD8");
 
   const sampleMV = xmlDoc.querySelector("MultiView");
   if (sampleMV) {
@@ -238,6 +247,12 @@ function cacheInputNames() {
     appState.inputsMap.set("10010", "Program");
   if (!appState.inputsMap.has("10011"))
     appState.inputsMap.set("10011", "Preview");
+  if (!appState.inputsMap.has("9101"))
+    appState.inputsMap.set("9101", "Record Status");
+  if (!appState.inputsMap.has("9102"))
+    appState.inputsMap.set("9102", "Stream Status");
+  if (!appState.inputsMap.has("9103"))
+    appState.inputsMap.set("9103", "Audio Status");
 }
 
 function cacheAudioMixOptions() {
@@ -294,15 +309,38 @@ function updateDashboardUI() {
     `badge ${appState.hasNetworkIngest}`;
 
   document.getElementById("system-info").style.display = "inline-block";
-  // Enable all nav buttons, then conditionally disable Audio Mapping and Live Stream & Record
+  // Enable all nav buttons, then conditionally disable them if the XML lacks the config
   document
     .querySelectorAll(".nav-btn")
-    .forEach((btn) => (btn.disabled = false));
+    .forEach((btn) => {
+      // Don't enable the overview tab, it's always enabled
+      if(btn.id) btn.disabled = false;
+    });
+
+  const mvNav = document.getElementById("nav-multiview");
+  if (mvNav && appState.xmlDoc.querySelectorAll("MultiViews > MultiView").length === 0) {
+    mvNav.disabled = true;
+    mvNav.title = "No multiview configuration found in this XML";
+  }
+
+  const auxNav = document.getElementById("nav-aux");
+  if (auxNav && appState.xmlDoc.querySelectorAll("Auxiliaries > Auxiliary").length === 0) {
+    auxNav.disabled = true;
+    auxNav.title = "No auxiliary outputs found in this XML";
+  }
+
+  const labelsNav = document.getElementById("nav-labels");
+  if (labelsNav && appState.xmlDoc.querySelectorAll("Inputs > Input").length === 0) {
+    labelsNav.disabled = true;
+    labelsNav.title = "No input routing or labels found in this XML";
+  }
+
   const audioNav = document.getElementById("nav-audio");
   if (audioNav && (!appState.hasFairlight || !appState.hasAudioMapping)) {
     audioNav.disabled = true;
-    audioNav.title = "Audio output routing is not available for this model";
+    audioNav.title = "Audio output routing is not available or missing in this XML";
   }
+
   const streamRecordNav = document.getElementById("nav-stream-record");
   if (streamRecordNav) {
     if (!appState.hasStreamRecord) {
@@ -994,6 +1032,21 @@ function openMultiviewModal(mvIdx, winIdx) {
   });
   select.appendChild(outGroup);
 
+  // Build Status Overlays Group (Mini/Extreme/SDI only)
+  const isCompactFamily = appState.productName.includes("Mini") || appState.productName.includes("Extreme") || appState.productName.includes("SDI");
+  if (isCompactFamily) {
+    const statusGroup = document.createElement("optgroup");
+    statusGroup.label = "--- Status Overlays ---";
+    const statuses = ["9101", "9102", "9103"];
+    statuses.forEach((id) => {
+      const option = document.createElement("option");
+      option.value = id;
+      option.text = `[${id}] ${appState.inputsMap.get(id)}`;
+      statusGroup.appendChild(option);
+    });
+    select.appendChild(statusGroup);
+  }
+
   // Pre-select the current source
   const mvNode = appState.xmlDoc.querySelectorAll("MultiViews > MultiView")[
     mvIdx
@@ -1036,8 +1089,8 @@ function buildStreamRecordPanel() {
   const liveStreamNode = appState.xmlDoc.querySelector("Profile > Output > LiveStream");
   const recordNode = appState.xmlDoc.querySelector("Profile > Output > Record");
 
-  if (!liveStreamNode && !recordNode) {
-    container.innerHTML = `<p style="color:var(--text-muted);">No Live Stream or Record configuration found in this XML.</p>`;
+  if (!appState.hasStreamRecord) {
+    container.innerHTML = `<p style="color:var(--text-muted);">Live Stream and Record settings are not available for this model.</p>`;
     return;
   }
 
@@ -1045,97 +1098,126 @@ function buildStreamRecordPanel() {
   grid.className = "stream-record-grid";
 
   // --- LIVE STREAM CARD ---
-  if (liveStreamNode) {
-    const serviceName = liveStreamNode.getAttribute("serviceName") || "";
-    const url = liveStreamNode.getAttribute("url") || "";
-    const key = liveStreamNode.getAttribute("key") || "";
-    
-    const bitrateNode = liveStreamNode.querySelector("bitrate");
-    const bitrateLow = bitrateNode ? (bitrateNode.getAttribute("low") || "") : "";
-    const bitrateHigh = bitrateNode ? (bitrateNode.getAttribute("high") || "") : "";
+  const serviceName = liveStreamNode ? (liveStreamNode.getAttribute("serviceName") || "") : "";
+  const url = liveStreamNode ? (liveStreamNode.getAttribute("url") || "") : "";
+  const key = liveStreamNode ? (liveStreamNode.getAttribute("key") || "") : "";
+  
+  const bitrateNode = liveStreamNode ? liveStreamNode.querySelector("bitrate") : null;
+  const bitrateLow = bitrateNode ? (bitrateNode.getAttribute("low") || "") : "";
+  const bitrateHigh = bitrateNode ? (bitrateNode.getAttribute("high") || "") : "";
 
-    const audioNode = liveStreamNode.querySelector("audioBitrate");
-    const audioLow = audioNode ? (audioNode.getAttribute("low") || "") : "";
-    const audioHigh = audioNode ? (audioNode.getAttribute("high") || "") : "";
+  const audioNode = liveStreamNode ? liveStreamNode.querySelector("audioBitrate") : null;
+  const audioLow = audioNode ? (audioNode.getAttribute("low") || "") : "";
+  const audioHigh = audioNode ? (audioNode.getAttribute("high") || "") : "";
 
-    const streamCard = document.createElement("div");
-    streamCard.className = "info-card";
-    streamCard.innerHTML = `
-      <h3>Live Stream Settings</h3>
+  const streamCard = document.createElement("div");
+  streamCard.className = "info-card";
+  streamCard.innerHTML = `
+    <h3>Live Stream Settings</h3>
+    <div class="form-group">
+      <label for="stream-service">Service Name</label>
+      <input type="text" id="stream-service" value="${escapeHTML(serviceName)}" onchange="updateXMLStreamAttr('serviceName', this.value)">
+    </div>
+    <div class="form-group">
+      <label for="stream-url">Server URL</label>
+      <input type="text" id="stream-url" value="${escapeHTML(url)}" onchange="updateXMLStreamAttr('url', this.value)">
+    </div>
+    <div class="form-group">
+      <label for="stream-key">Stream Key</label>
+      <input type="text" id="stream-key" value="${escapeHTML(key)}" onchange="updateXMLStreamAttr('key', this.value)">
+    </div>
+    <div class="form-row">
       <div class="form-group">
-        <label for="stream-service">Service Name</label>
-        <input type="text" id="stream-service" value="${escapeHTML(serviceName)}" onchange="updateXMLStreamAttr('serviceName', this.value)">
+        <label for="stream-bitrate-low">Bitrate Low (bps)</label>
+        <input type="number" id="stream-bitrate-low" value="${bitrateLow}" onchange="updateXMLStreamBitrate('bitrate', 'low', this.value)">
       </div>
       <div class="form-group">
-        <label for="stream-url">Server URL</label>
-        <input type="text" id="stream-url" value="${escapeHTML(url)}" onchange="updateXMLStreamAttr('url', this.value)">
+        <label for="stream-bitrate-high">Bitrate High (bps)</label>
+        <input type="number" id="stream-bitrate-high" value="${bitrateHigh}" onchange="updateXMLStreamBitrate('bitrate', 'high', this.value)">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="stream-audio-low">Audio Bitrate Low (bps)</label>
+        <input type="number" id="stream-audio-low" value="${audioLow}" onchange="updateXMLStreamBitrate('audioBitrate', 'low', this.value)">
       </div>
       <div class="form-group">
-        <label for="stream-key">Stream Key</label>
-        <input type="text" id="stream-key" value="${escapeHTML(key)}" onchange="updateXMLStreamAttr('key', this.value)">
+        <label for="stream-audio-high">Audio Bitrate High (bps)</label>
+        <input type="number" id="stream-audio-high" value="${audioHigh}" onchange="updateXMLStreamBitrate('audioBitrate', 'high', this.value)">
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="stream-bitrate-low">Bitrate Low (bps)</label>
-          <input type="number" id="stream-bitrate-low" value="${bitrateLow}" onchange="updateXMLStreamBitrate('bitrate', 'low', this.value)">
-        </div>
-        <div class="form-group">
-          <label for="stream-bitrate-high">Bitrate High (bps)</label>
-          <input type="number" id="stream-bitrate-high" value="${bitrateHigh}" onchange="updateXMLStreamBitrate('bitrate', 'high', this.value)">
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="stream-audio-low">Audio Bitrate Low (bps)</label>
-          <input type="number" id="stream-audio-low" value="${audioLow}" onchange="updateXMLStreamBitrate('audioBitrate', 'low', this.value)">
-        </div>
-        <div class="form-group">
-          <label for="stream-audio-high">Audio Bitrate High (bps)</label>
-          <input type="number" id="stream-audio-high" value="${audioHigh}" onchange="updateXMLStreamBitrate('audioBitrate', 'high', this.value)">
-        </div>
-      </div>
-    `;
-    grid.appendChild(streamCard);
-  }
+    </div>
+  `;
+  grid.appendChild(streamCard);
 
   // --- RECORD CARD ---
-  if (recordNode) {
-    const filename = recordNode.getAttribute("filename") || "";
-    const recordInAllCameras = recordNode.getAttribute("recordInAllCameras") === "True";
-    const recordAllISOInputs = recordNode.getAttribute("recordAllISOInputs") === "True";
+  const filename = recordNode ? (recordNode.getAttribute("filename") || "") : "";
+  const recordInAllCameras = recordNode ? (recordNode.getAttribute("recordInAllCameras") === "True") : false;
+  const recordAllISOInputs = recordNode ? (recordNode.getAttribute("recordAllISOInputs") === "True") : false;
 
-    const recordCard = document.createElement("div");
-    recordCard.className = "info-card";
-    recordCard.innerHTML = `
-      <h3>Record Settings</h3>
-      <div class="form-group">
-        <label for="record-filename">Filename Prefix</label>
-        <input type="text" id="record-filename" value="${escapeHTML(filename)}" onchange="updateXMLRecordAttr('filename', this.value)">
-      </div>
-      <div class="form-group checkbox-group">
-        <input type="checkbox" id="record-all-cameras" ${recordInAllCameras ? "checked" : ""} onchange="updateXMLRecordAttr('recordInAllCameras', this.checked)">
-        <label for="record-all-cameras">Record in All Cameras</label>
-      </div>
-      <div class="form-group checkbox-group">
-        <input type="checkbox" id="record-all-iso" ${recordAllISOInputs ? "checked" : ""} onchange="updateXMLRecordAttr('recordAllISOInputs', this.checked)">
-        <label for="record-all-iso">Record All ISO Inputs (ISO models)</label>
-      </div>
-    `;
-    grid.appendChild(recordCard);
-  }
+  const recordCard = document.createElement("div");
+  recordCard.className = "info-card";
+  recordCard.innerHTML = `
+    <h3>Record Settings</h3>
+    <div class="form-group">
+      <label for="record-filename">Filename Prefix</label>
+      <input type="text" id="record-filename" value="${escapeHTML(filename)}" onchange="updateXMLRecordAttr('filename', this.value)">
+    </div>
+    <div class="form-group checkbox-group">
+      <input type="checkbox" id="record-all-cameras" ${recordInAllCameras ? "checked" : ""} onchange="updateXMLRecordAttr('recordInAllCameras', this.checked)">
+      <label for="record-all-cameras">Record in All Cameras</label>
+    </div>
+    <div class="form-group checkbox-group" style="display: ${appState.hasIso ? 'flex' : 'none'};">
+      <input type="checkbox" id="record-all-iso" ${recordAllISOInputs ? "checked" : ""} onchange="updateXMLRecordAttr('recordAllISOInputs', this.checked)">
+      <label for="record-all-iso">Record All ISO Inputs (ISO models)</label>
+    </div>
+  `;
+  grid.appendChild(recordCard);
 
   container.appendChild(grid);
 }
 
+function getOrCreateOutputNode() {
+  let profile = appState.xmlDoc.querySelector("Profile");
+  if (!profile) return null;
+  let outputNode = appState.xmlDoc.querySelector("Profile > Output");
+  if (!outputNode) {
+    outputNode = appState.xmlDoc.createElement("Output");
+    profile.appendChild(outputNode);
+  }
+  return outputNode;
+}
+
+function getOrCreateStreamNode() {
+  const outputNode = getOrCreateOutputNode();
+  if (!outputNode) return null;
+  let streamNode = appState.xmlDoc.querySelector("Profile > Output > LiveStream");
+  if (!streamNode) {
+    streamNode = appState.xmlDoc.createElement("LiveStream");
+    outputNode.appendChild(streamNode);
+  }
+  return streamNode;
+}
+
+function getOrCreateRecordNode() {
+  const outputNode = getOrCreateOutputNode();
+  if (!outputNode) return null;
+  let recordNode = appState.xmlDoc.querySelector("Profile > Output > Record");
+  if (!recordNode) {
+    recordNode = appState.xmlDoc.createElement("Record");
+    outputNode.appendChild(recordNode);
+  }
+  return recordNode;
+}
+
 function updateXMLStreamAttr(attrName, newValue) {
-  const node = appState.xmlDoc.querySelector("Profile > Output > LiveStream");
+  const node = getOrCreateStreamNode();
   if (node) {
     node.setAttribute(attrName, newValue);
   }
 }
 
 function updateXMLStreamBitrate(nodeName, attrName, newValue) {
-  let streamNode = appState.xmlDoc.querySelector("Profile > Output > LiveStream");
+  let streamNode = getOrCreateStreamNode();
   if (!streamNode) return;
 
   let node = streamNode.querySelector(nodeName);
@@ -1147,7 +1229,7 @@ function updateXMLStreamBitrate(nodeName, attrName, newValue) {
 }
 
 function updateXMLRecordAttr(attrName, newValue) {
-  const node = appState.xmlDoc.querySelector("Profile > Output > Record");
+  const node = getOrCreateRecordNode();
   if (node) {
     if (typeof newValue === "boolean") {
       node.setAttribute(attrName, newValue ? "True" : "False");
