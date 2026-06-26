@@ -938,14 +938,30 @@ function updateModernLayout(mvIdx, bitMask, isChecked) {
   let currentId = parseInt(mvNode.getAttribute("LayoutID") || 15);
 
   // Modify the bitmask based on the toggle
-  if (isChecked) currentId |= bitMask;
-  else currentId &= ~bitMask;
+  if (isChecked) {
+    currentId |= bitMask;
+  } else {
+    currentId &= ~bitMask;
+    
+    // When unsplitting, ensure the primary window doesn't have an invalid Status Overlay source
+    let primaryWinIndex = 0;
+    if (bitMask === 1) primaryWinIndex = 0;
+    else if (bitMask === 2) primaryWinIndex = 2;
+    else if (bitMask === 4) primaryWinIndex = 8;
+    else if (bitMask === 8) primaryWinIndex = 10;
+    
+    const winNode = mvNode.querySelector(`Windows > Window[index="${primaryWinIndex}"]`);
+    if (winNode) {
+      const currentInput = winNode.getAttribute("input");
+      if (["9101", "9102", "9103"].includes(currentInput)) {
+        winNode.setAttribute("input", "0"); // Fallback to Black
+      }
+    }
+  }
 
   mvNode.setAttribute("LayoutID", currentId);
   buildMultiview(); // Visually refresh the grid
   switchMultiviewTab(mvIdx); // Keep the user on the current tab
-
-  
 }
 
 function updateLegacyLayout(mvIdx, layoutName) {
@@ -1032,9 +1048,28 @@ function openMultiviewModal(mvIdx, winIdx) {
   });
   select.appendChild(outGroup);
 
+  // Pre-select the current source and determine if it's a large window
+  const mvNode = appState.xmlDoc.querySelectorAll("MultiViews > MultiView")[mvIdx];
+  const winNode = mvNode.querySelector(`Windows > Window[index="${winIdx}"]`);
+
+  let isLargeWindow = false;
+  if (appState.generation === "modern") {
+    const layoutId = parseInt(mvNode.getAttribute("LayoutID") || 15);
+    const quadMap = { 0:0, 1:0, 4:0, 5:0, 2:1, 3:1, 6:1, 7:1, 8:2, 9:2, 12:2, 13:2, 10:3, 11:3, 14:3, 15:3 };
+    const primaryBoxes = [0, 2, 8, 10];
+    const quadIndex = quadMap[winIdx];
+    if (quadIndex !== undefined) {
+      const bitVal = Math.pow(2, quadIndex);
+      const isSplit = (layoutId & bitVal) !== 0;
+      isLargeWindow = !isSplit && primaryBoxes.includes(winIdx);
+    }
+  } else {
+    isLargeWindow = (winIdx === 0 || winIdx === 1);
+  }
+
   // Build Status Overlays Group (Mini/Extreme/SDI only)
   const isCompactFamily = appState.productName.includes("Mini") || appState.productName.includes("Extreme") || appState.productName.includes("SDI");
-  if (isCompactFamily) {
+  if (isCompactFamily && !isLargeWindow) {
     const statusGroup = document.createElement("optgroup");
     statusGroup.label = "--- Status Overlays ---";
     const statuses = ["9101", "9102", "9103"];
@@ -1047,11 +1082,6 @@ function openMultiviewModal(mvIdx, winIdx) {
     select.appendChild(statusGroup);
   }
 
-  // Pre-select the current source
-  const mvNode = appState.xmlDoc.querySelectorAll("MultiViews > MultiView")[
-    mvIdx
-  ];
-  const winNode = mvNode.querySelector(`Windows > Window[index="${winIdx}"]`);
   if (winNode) select.value = winNode.getAttribute("input");
 
   // Open the native HTML dialog
