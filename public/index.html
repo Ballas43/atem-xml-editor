@@ -36,8 +36,8 @@
         <button class="nav-btn" id="nav-multiview" data-target="tab-multiview" disabled>Multiview</button>
         <button class="nav-btn" id="nav-aux" data-target="tab-aux" disabled>Aux Routing</button>
         <button class="nav-btn" id="nav-audio" data-target="tab-audio" disabled>Audio Mapping</button>
-        <button class="nav-btn" id="nav-stream-record" data-target="tab-stream-record" disabled>Live Stream &amp;
-            Record (Beta)</button>
+        <button class="nav-btn" id="nav-stream-record" data-target="tab-stream-record" disabled>Live Stream &amp; Record (Beta)</button>
+        <button class="nav-btn" id="nav-counters" data-target="tab-counters" disabled>Counters</button>
 
         <div class="credit-footer">
             <a href="https://linktr.ee/timotiusaustin43" target="_blank" rel="noopener noreferrer" class="credit-link">
@@ -95,6 +95,7 @@
                             <span class="badge" id="badge-madi">MADI</span>
                             <span class="badge" id="badge-iso">Record ISO</span>
                             <span class="badge" id="badge-net">Network Ingest</span>
+                            <span class="badge" id="badge-counters">Counters</span>
                         </div>
                     </div>
                 </div>
@@ -196,7 +197,15 @@
                     <!-- Populated by JS -->
                 </div>
             </div>
-
+            
+            <!-- TAB 7: COUNTERS -->
+            <div id="tab-counters" class="tab-panel">
+                <h2>On-Screen Counters</h2>
+                <p style="color:var(--text-muted); margin-bottom: 20px;">Configure countdown, count-up, or time-of-day clocks for display on the Multiview or physical outputs.</p>
+                <div id="counters-container">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
         </div>
     </main>
     <dialog id="mv-modal"

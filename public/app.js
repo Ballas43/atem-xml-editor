@@ -193,6 +193,8 @@ function analyzeATEMProfile(xmlDoc) {
     productUpper.includes("MINI PRO") ||
     productUpper.includes("EXTREME") ||
     productUpper.includes("HD8");
+  
+  appState.hasCounters = xmlDoc.querySelector("Counters") !== null || xmlDoc.querySelector("Counters > Counter") !== null;
 
   const sampleMV = xmlDoc.querySelector("MultiView");
   if (sampleMV) {
@@ -299,15 +301,13 @@ function updateDashboardUI() {
       ? "Numeric (LayoutID)"
       : "Text (layout attr)";
 
-  document.getElementById("badge-ssrc").className =
-    `badge ${appState.hasSuperSource}`;
-  document.getElementById("badge-fairlight").className =
-    `badge ${appState.hasFairlight}`;
+  document.getElementById("badge-ssrc").className = `badge ${appState.hasSuperSource}`;
+  document.getElementById("badge-fairlight").className = `badge ${appState.hasFairlight}`;
   document.getElementById("badge-madi").className = `badge ${appState.hasMadi}`;
   document.getElementById("badge-iso").className = `badge ${appState.hasIso}`;
-  document.getElementById("badge-net").className =
-    `badge ${appState.hasNetworkIngest}`;
-
+  document.getElementById("badge-net").className = `badge ${appState.hasNetworkIngest}`;
+  document.getElementById("badge-counters").className = `badge ${appState.hasCounters}`;
+  
   document.getElementById("system-info").style.display = "inline-block";
   // Enable all nav buttons, then conditionally disable them if the XML lacks the config
   document
@@ -352,11 +352,23 @@ function updateDashboardUI() {
     }
   }
 
+  const countersNav = document.getElementById("nav-counters");
+  if (countersNav) {
+    if (!appState.hasCounters) {
+      countersNav.disabled = true;
+      countersNav.title = "Counters are not available on this model";
+    } else {
+      countersNav.disabled = false;
+      countersNav.title = "";
+    }
+  }
+
   buildLabelsTable();
   buildAuxMatrix();
   buildMultiview();
   buildAudioMapping();
   buildStreamRecordPanel();
+  buildCountersPanel();
 
   document.getElementById("nav-labels").click();
 }
@@ -1266,6 +1278,126 @@ function updateXMLRecordAttr(attrName, newValue) {
     } else {
       node.setAttribute(attrName, newValue);
     }
+  }
+}
+
+// --- COUNTERS PANEL ---
+function buildCountersPanel() {
+  const container = document.getElementById("counters-container");
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!appState.hasCounters) {
+    container.innerHTML = "<p>Counters are not supported on this model.</p>";
+    return;
+  }
+
+  const counters = appState.xmlDoc.querySelectorAll("Counters > Counter");
+  
+  if (counters.length === 0) {
+    container.innerHTML = "<p>No counters configured in this XML.</p>";
+    return;
+  }
+
+  counters.forEach((counterNode, idx) => {
+    const cIndex = counterNode.getAttribute("index");
+    const enabled = counterNode.getAttribute("enabled") === "True";
+    const mode = counterNode.getAttribute("mode") || "Countdown";
+    const autoHide = counterNode.getAttribute("autoHide") === "True";
+    const posX = counterNode.getAttribute("positionX") || "0";
+    const posY = counterNode.getAttribute("positionY") || "0";
+    const size = counterNode.getAttribute("size") || "25";
+    const opacity = counterNode.getAttribute("opacity") || "100";
+    const startH = counterNode.getAttribute("startFromHours") || "0";
+    const startM = counterNode.getAttribute("startFromMinutes") || "0";
+    const startS = counterNode.getAttribute("startFromSeconds") || "0";
+    const startF = counterNode.getAttribute("startFromFrames") || "0";
+
+    const card = document.createElement("div");
+    card.className = "info-card";
+    card.style.marginBottom = "20px";
+
+    card.innerHTML = `
+      <h3 style="margin-top:0; border-bottom: 1px solid var(--border); padding-bottom: 10px;">Counter ${parseInt(cIndex) + 1}</h3>
+      <div class="form-row">
+        <!-- Left Column -->
+        <div style="flex: 1;">
+          <div class="form-group checkbox-group" style="margin-bottom: 15px;">
+            <input type="checkbox" id="counter-enabled-${cIndex}" ${enabled ? "checked" : ""} onchange="updateXMLCounterAttr(${cIndex}, 'enabled', this.checked ? 'True' : 'False')">
+            <label for="counter-enabled-${cIndex}">Enabled</label>
+          </div>
+          
+          <div class="form-group">
+            <label>Mode</label>
+            <select onchange="updateXMLCounterAttr(${cIndex}, 'mode', this.value)">
+              <option value="Countdown" ${mode === "Countdown" ? "selected" : ""}>Countdown</option>
+              <option value="CountUp" ${mode === "CountUp" ? "selected" : ""}>Count Up</option>
+              <option value="TimeOfDay" ${mode === "TimeOfDay" ? "selected" : ""}>Time of Day</option>
+            </select>
+          </div>
+
+          <div class="form-group checkbox-group" style="margin-bottom: 15px;">
+            <input type="checkbox" id="counter-autohide-${cIndex}" ${autoHide ? "checked" : ""} onchange="updateXMLCounterAttr(${cIndex}, 'autoHide', this.checked ? 'True' : 'False')">
+            <label for="counter-autohide-${cIndex}">Auto Hide</label>
+          </div>
+        </div>
+        
+        <!-- Right Column -->
+        <div style="flex: 1;">
+          <div class="form-row">
+            <div class="form-group" style="flex: 1;">
+              <label>Position X</label>
+              <input type="number" step="0.1" value="${posX}" onchange="updateXMLCounterAttr(${cIndex}, 'positionX', this.value)">
+            </div>
+            <div class="form-group" style="flex: 1;">
+              <label>Position Y</label>
+              <input type="number" step="0.1" value="${posY}" onchange="updateXMLCounterAttr(${cIndex}, 'positionY', this.value)">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Size</label>
+            <input type="number" value="${size}" onchange="updateXMLCounterAttr(${cIndex}, 'size', this.value)">
+          </div>
+          
+          <div class="form-group">
+            <label>Opacity (${opacity}%)</label>
+            <input type="range" min="0" max="100" value="${opacity}" onchange="updateXMLCounterAttr(${cIndex}, 'opacity', this.value)" style="width: 100%;">
+          </div>
+        </div>
+      </div>
+      
+      <div style="margin-top: 20px;">
+        <h4 style="margin-bottom: 10px; color: var(--text-main); font-size: 0.9rem;">Start Time (HH:MM:SS:FF)</h4>
+        <div class="form-row">
+          <div class="form-group" style="flex: 1; margin: 0;">
+            <input type="number" min="0" max="23" value="${startH}" title="Hours" onchange="updateXMLCounterAttr(${cIndex}, 'startFromHours', this.value)" style="text-align: center;">
+          </div>
+          <span style="display:flex; align-items:center; font-weight:bold; color:var(--text-muted); padding: 0 5px;">:</span>
+          <div class="form-group" style="flex: 1; margin: 0;">
+            <input type="number" min="0" max="59" value="${startM}" title="Minutes" onchange="updateXMLCounterAttr(${cIndex}, 'startFromMinutes', this.value)" style="text-align: center;">
+          </div>
+          <span style="display:flex; align-items:center; font-weight:bold; color:var(--text-muted); padding: 0 5px;">:</span>
+          <div class="form-group" style="flex: 1; margin: 0;">
+            <input type="number" min="0" max="59" value="${startS}" title="Seconds" onchange="updateXMLCounterAttr(${cIndex}, 'startFromSeconds', this.value)" style="text-align: center;">
+          </div>
+          <span style="display:flex; align-items:center; font-weight:bold; color:var(--text-muted); padding: 0 5px;">:</span>
+          <div class="form-group" style="flex: 1; margin: 0;">
+            <input type="number" min="0" max="59" value="${startF}" title="Frames" onchange="updateXMLCounterAttr(${cIndex}, 'startFromFrames', this.value)" style="text-align: center;">
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.appendChild(card);
+  });
+}
+
+function updateXMLCounterAttr(index, attrName, value) {
+  const node = appState.xmlDoc.querySelector(`Counters > Counter[index="${index}"]`);
+  if (node) {
+    node.setAttribute(attrName, value);
+    buildCountersPanel(); // Refresh UI
   }
 }
 
