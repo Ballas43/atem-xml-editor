@@ -23,8 +23,54 @@
     <meta property="twitter:description"
         content="A free visual, offline web-based ATEM XML editor for Blackmagic Design switchers. Easily configure labels, aux routing, Multiviews, and Fairlight audio mapping.">
 
-    <link rel="stylesheet" href="style.css">
-    <script src="app.js" defer></script>
+    <link rel="stylesheet" href="style.css?v=28">
+    <script>
+        function initTheme() {
+            const savedTheme = localStorage.getItem('atem-theme');
+            if (savedTheme) {
+                document.documentElement.setAttribute('data-theme', savedTheme);
+            } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        }
+        initTheme();
+        
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('atem-theme', newTheme);
+            
+            const icon = document.getElementById('theme-icon');
+            if (newTheme === 'light') {
+                icon.innerHTML = '<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>';
+            } else {
+                icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>';
+            }
+        }
+        
+        // Listen for OS theme changes if no saved preference
+        window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
+            if (!localStorage.getItem('atem-theme')) {
+                document.documentElement.setAttribute('data-theme', e.matches ? 'light' : 'dark');
+                const icon = document.getElementById('theme-icon');
+                if (e.matches) {
+                    icon.innerHTML = '<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>';
+                } else {
+                    icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>';
+                }
+            }
+        });
+        
+        // Setup icon on DOM load
+        document.addEventListener('DOMContentLoaded', () => {
+            if (document.documentElement.getAttribute('data-theme') === 'light') {
+                document.getElementById('theme-icon').innerHTML = '<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>';
+            }
+        });
+    </script>
+    <script src="models.js?v=30"></script>
+    <script src="app.js?v=30" defer></script>
 </head>
 
 <body>
@@ -52,7 +98,21 @@
             <div style="display: flex; align-items: center; gap: 15px;">
                 <div id="active-switcher-name" style="font-weight: 500; font-size: 1.1rem;">No XML Loaded</div>
             </div>
-            <button class="export-btn" id="btn-export" onclick="exportXML()">Export XML</button>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <button class="reset-btn" id="btn-reset-session" onclick="resetEntireSession()" style="display:none;" title="Unload active configuration and start over">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                        <path d="M3 3v5h5"></path>
+                    </svg>
+                    Reset Session
+                </button>
+                <button class="theme-toggle" id="btn-theme" onclick="toggleTheme()" aria-label="Toggle Theme">
+                    <svg id="theme-icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </button>
+                <button class="export-btn" id="btn-export" onclick="exportXML()">Export XML</button>
+            </div>
         </header>
 
         <div class="content-area">
@@ -64,7 +124,57 @@
                     <input type="file" id="file-input" accept=".xml" style="display:none;">
                 </div>
 
+                <div class="create-scratch-zone" style="text-align: center; margin: 20px 0; padding: 20px; background: rgba(255, 255, 255, 0.05); border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1);">
+                    <h3 style="margin-bottom: 15px; color: var(--accent);">Or Create From Scratch (BETA)</h3>
+                    <div style="display: flex; gap: 10px; justify-content: center; align-items: center; max-width: 500px; margin: 0 auto;">
+                        <select id="model-select" class="theme-select" style="flex: 1;">
+                            <option value="" disabled selected>Select ATEM Model...</option>
+                        </select>
+                        <button class="export-btn" style="margin: 0; padding: 8px 16px; border-radius: 6px;" onclick="handleCreateFromScratch()">Create XML</button>
+                    </div>
+                    <div class="scratch-disclaimer" style="margin-top: 15px; padding: 12px 16px; border-radius: 8px; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.28); color: #f59e0b; font-size: 0.82rem; text-align: left; max-width: 560px; margin-left: auto; margin-right: auto; line-height: 1.45;">
+                        <div style="display: flex; align-items: flex-start; gap: 10px;">
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 2px;">
+                                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
+                                <line x1="12" y1="9" x2="12" y2="13"></line>
+                                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                            </svg>
+                            <div>
+                                <strong>BETA Feature Notice:</strong> Generating a profile from scratch creates a baseline XML structure from hardware profiles. Please review and reconfirm all settings (video standards, audio mappings, multiview window assignments, and streaming credentials) in ATEM Software Control before production use.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="center-wrapper">
+                    <div id="system-info" class="info-card card-centered" style="display:none; margin-bottom: 25px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
+                            <h3 style="margin: 0;">Detected Hardware Schema</h3>
+                            <button class="tab-reset-btn" onclick="resetEntireSession()" title="Unload active configuration and start over">
+                                <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                                    <path d="M3 3v5h5"></path>
+                                </svg>
+                                Unload &amp; Reset
+                            </button>
+                        </div>
+                        <p><strong>Model:</strong> <span id="info-model" style="color:var(--text-main);"></span></p>
+                        <p><strong>Architecture Tier:</strong> <span id="info-tier" style="color:var(--text-main);"></span></p>
+                        <p><strong>Generation:</strong> <span id="info-generation" style="color:var(--text-main);"></span></p>
+                        <p><strong>Audio Engine:</strong> <span id="info-audio" style="color:var(--text-main);"></span></p>
+                        <p><strong>SuperSource Count:</strong> <span id="info-ssrc-count" style="color:var(--text-main);"></span></p>
+                        <p><strong>Multiview Count:</strong> <span id="info-mv-count" style="color:var(--text-main);"></span></p>
+                        <p><strong>MV Layout Type:</strong> <span id="info-mv-layout" style="color:var(--text-main);"></span></p>
+                        <div style="margin-top: 15px;">
+                            <span class="badge" id="badge-ssrc">SuperSource</span>
+                            <span class="badge" id="badge-fairlight">Fairlight Audio</span>
+                            <span class="badge" id="badge-madi">MADI</span>
+                            <span class="badge" id="badge-iso">Record ISO</span>
+                            <span class="badge" id="badge-net">Network Ingest</span>
+                            <span class="badge" id="badge-counters">Counters</span>
+                        </div>
+                    </div>
+
                     <div class="info-card card-centered card-usage">
                         <h3>How to Use</h3>
                         <ol class="usage-list">
@@ -78,33 +188,22 @@
                                 downloaded file!</li>
                         </ol>
                     </div>
-
-                    <div id="system-info" class="info-card card-centered" style="display:none;">
-                        <h3>Detected Hardware Schema</h3>
-                        <p><strong>Model:</strong> <span id="info-model" style="color:white;"></span></p>
-                        <p><strong>Architecture Tier:</strong> <span id="info-tier" style="color:white;"></span></p>
-                        <p><strong>Generation:</strong> <span id="info-generation" style="color:white;"></span></p>
-                        <p><strong>Audio Engine:</strong> <span id="info-audio" style="color:white;"></span></p>
-                        <p><strong>SuperSource Count:</strong> <span id="info-ssrc-count" style="color:white;"></span>
-                        </p>
-                        <p><strong>Multiview Count:</strong> <span id="info-mv-count" style="color:white;"></span></p>
-                        <p><strong>MV Layout Type:</strong> <span id="info-mv-layout" style="color:white;"></span></p>
-                        <div style="margin-top: 15px;">
-                            <span class="badge" id="badge-ssrc">SuperSource</span>
-                            <span class="badge" id="badge-fairlight">Fairlight Audio</span>
-                            <span class="badge" id="badge-madi">MADI</span>
-                            <span class="badge" id="badge-iso">Record ISO</span>
-                            <span class="badge" id="badge-net">Network Ingest</span>
-                            <span class="badge" id="badge-counters">Counters</span>
-                        </div>
-                    </div>
                 </div>
             </div>
 
             <div id="tab-labels" class="tab-panel">
-                <div class="sub-tab-bar">
-                    <button class="sub-tab-btn active" onclick="switchSubTab(this, 'panel-inputs')">Inputs</button>
-                    <button class="sub-tab-btn" onclick="switchSubTab(this, 'panel-outputs')">Outputs</button>
+                <div class="tab-header-row">
+                    <div class="sub-tab-bar" style="margin-bottom: 0;">
+                        <button class="sub-tab-btn active" onclick="switchSubTab(this, 'panel-inputs')">Inputs</button>
+                        <button class="sub-tab-btn" onclick="switchSubTab(this, 'panel-outputs')">Outputs</button>
+                    </div>
+                    <button class="tab-reset-btn" onclick="resetLabelsTab()" title="Revert input and output labels to initial XML state">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                            <path d="M3 3v5h5"></path>
+                        </svg>
+                        Reset Labels
+                    </button>
                 </div>
 
                 <div id="panel-inputs" class="sub-panel active">
@@ -140,9 +239,19 @@
             </div>
 
             <div id="tab-multiview" class="tab-panel">
-                <h2>Multiview Configuration</h2>
-                <p style="color:var(--text-muted)">Select a multiview output to inspect and configure its window
-                    assignments.</p>
+                <div class="tab-header-row">
+                    <div>
+                        <h2 style="margin: 0 0 4px 0;">Multiview Configuration</h2>
+                        <p style="color:var(--text-muted); margin: 0;">Select a multiview output to inspect and configure its window assignments.</p>
+                    </div>
+                    <button class="tab-reset-btn" onclick="resetMultiviewTab()" title="Revert multiview windows and layout to initial XML state">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                            <path d="M3 3v5h5"></path>
+                        </svg>
+                        Reset Multiviews
+                    </button>
+                </div>
                 <div class="mv-tab-bar" id="mv-tab-bar">
                 </div>
                 <div id="mv-panels-container">
@@ -150,10 +259,18 @@
             </div>
 
             <div id="tab-aux" class="tab-panel">
-                <div class="sub-tab-bar">
-                    <button class="sub-tab-btn active" onclick="switchSubTab(this, 'panel-aux-inputs')">Route
-                        Inputs</button>
-                    <button class="sub-tab-btn" onclick="switchSubTab(this, 'panel-aux-outputs')">Route Outputs</button>
+                <div class="tab-header-row">
+                    <div class="sub-tab-bar" style="margin-bottom: 0;">
+                        <button class="sub-tab-btn active" onclick="switchSubTab(this, 'panel-aux-inputs')">Route Inputs</button>
+                        <button class="sub-tab-btn" onclick="switchSubTab(this, 'panel-aux-outputs')">Route Outputs</button>
+                    </div>
+                    <button class="tab-reset-btn" onclick="resetAuxTab()" title="Revert auxiliary output crosspoints to initial XML state">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                            <path d="M3 3v5h5"></path>
+                        </svg>
+                        Reset Aux Matrix
+                    </button>
                 </div>
 
                 <div id="panel-aux-inputs" class="sub-panel active">
@@ -175,10 +292,19 @@
 
             <!-- TAB 5: AUDIO MAPPING -->
             <div id="tab-audio" class="tab-panel">
-                <h2>Audio Output Mapping</h2>
-                <p style="color:var(--text-muted); margin-bottom: 20px;">Configure audio source routing for each
-                    physical output. Available on Constellation-class switchers with Fairlight audio and MADI support.
-                </p>
+                <div class="tab-header-row">
+                    <div>
+                        <h2 style="margin: 0 0 4px 0;">Audio Output Mapping</h2>
+                        <p style="color:var(--text-muted); margin: 0;">Configure audio source routing for each physical output (Fairlight / MADI).</p>
+                    </div>
+                    <button class="tab-reset-btn" onclick="resetAudioTab()" title="Revert audio mapping and channel routing to initial XML state">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                            <path d="M3 3v5h5"></path>
+                        </svg>
+                        Reset Audio Mapping
+                    </button>
+                </div>
                 <div class="audio-output-tabs" id="audio-output-tabs">
                     <!-- Populated by JS -->
                 </div>
@@ -189,10 +315,19 @@
 
             <!-- TAB 6: LIVE STREAM & RECORD -->
             <div id="tab-stream-record" class="tab-panel">
-                <h2>Live Stream &amp; Record Settings (Beta)</h2>
-                <p style="color:var(--text-muted); margin-bottom: 20px;">Configure streaming and recording output
-                    parameters. Available on ATEM ISO/mini-class switchers that support live streaming and direct USB
-                    recording.</p>
+                <div class="tab-header-row">
+                    <div>
+                        <h2 style="margin: 0 0 4px 0;">Live Stream &amp; Record Settings</h2>
+                        <p style="color:var(--text-muted); margin: 0;">Configure streaming endpoints, bitrate quality, and disk recording.</p>
+                    </div>
+                    <button class="tab-reset-btn" onclick="resetStreamRecordTab()" title="Revert stream URL, key, and filename to initial XML state">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                            <path d="M3 3v5h5"></path>
+                        </svg>
+                        Reset Stream &amp; Record
+                    </button>
+                </div>
                 <div id="stream-record-container">
                     <!-- Populated by JS -->
                 </div>
@@ -200,8 +335,19 @@
             
             <!-- TAB 7: COUNTERS -->
             <div id="tab-counters" class="tab-panel">
-                <h2>On-Screen Counters</h2>
-                <p style="color:var(--text-muted); margin-bottom: 20px;">Configure countdown, count-up, or time-of-day clocks for display on the Multiview or physical outputs.</p>
+                <div class="tab-header-row">
+                    <div>
+                        <h2 style="margin: 0 0 4px 0;">On-Screen Counters</h2>
+                        <p style="color:var(--text-muted); margin: 0;">Configure countdown, count-up, or time-of-day clocks for display on outputs.</p>
+                    </div>
+                    <button class="tab-reset-btn" onclick="resetCountersTab()" title="Revert on-screen timer settings to initial XML state">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                            <path d="M3 3v5h5"></path>
+                        </svg>
+                        Reset Counters
+                    </button>
+                </div>
                 <div id="counters-container">
                     <!-- Populated by JS -->
                 </div>

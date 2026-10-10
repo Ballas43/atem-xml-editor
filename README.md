@@ -10,6 +10,7 @@ If you work with live events, you know how many ATEM switchers you need to confi
 ## Features
 
 - **Universal ATEM Support**: Automatically detects your hardware model, from the compact **ATEM Mini** family all the way up to the massive **Constellation 8K**.
+- **Create From Scratch (BETA)**: Generate baseline ATEM XML configurations from scratch without an existing backup file. Choose from 40+ ATEM models with automated schema provisioning, powered by hardware data from the Bitfocus Companion ATEM module.
 - **Labels & Routing**: Quickly rename physical inputs, virtual sources (Media Players, SuperSources), and outputs without digging through XML nodes. 
 - **Audio Mix Toggles**: Set your input audio states (`ON`, `OFF`, or `Audio-Follow-Video`) directly from the dashboard.
 - **Visual Aux Routing Matrix**: A beautiful crosspoint-style matrix that lets you click to route inputs and internal sources to your Auxiliary outputs.
@@ -18,6 +19,9 @@ If you work with live events, you know how many ATEM switchers you need to confi
   - Support for legacy text layouts (Program Top / Program Bottom swaps).
   - Click on any Multiview window in the grid to re-assign its source.
 - **Fairlight Audio Output Mapping**: Dynamically route audio sources to physical MADI, Aux, or HDMI outputs (on supported switchers).
+- **Live Stream & Record Settings (Beta)**: Configure RTMP streaming server URLs, stream keys, video/audio bitrates, and disk recording options (including ISO recording).
+- **On-Screen Counters**: Configure countdown, count-up, or time-of-day clocks with position, size, opacity, and auto-hide states on supported ATEM.
+- **Dark & Light Mode**: Seamless dark and light themes with automatic OS preference sync and persistent header toggle.
 
 ---
 
@@ -53,6 +57,12 @@ Pull requests are welcome! If you are adding support for a new ATEM feature:
 1. Ensure that the logic safely checks for the presence of the feature before rendering (e.g., checking if the switcher belongs to the ATEM Mini family before offering specific Multiview routing options).
 2. Avoid using innerHTML inside loops when generating large tables to prevent O(N²) DOM reflow bottlenecks.
 3. Use the `escapeHTML` utility when inserting user-defined labels to prevent UI breaking.
+
+---
+
+## Acknowledgements & Credits
+
+Special thanks and credit to the [Bitfocus Companion](https://bitfocus.io/companion) team and the contributors of [`companion-module-bmd-atem`](https://github.com/bitfocus/companion-module-bmd-atem). Their comprehensive database of ATEM switcher hardware models and capability made the **Create From Scratch** feature possible.
 
 ---
 

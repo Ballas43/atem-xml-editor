@@ -1,6 +1,7 @@
 // --- GLOBAL STATE ---
 let appState = {
   xmlDoc: null,
+  originalXmlString: null,
   productName: "",
   tier: "",
   generation: "legacy",
@@ -53,18 +54,24 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 
 // --- SUB-TAB NAVIGATION ---
 function switchSubTab(btn, targetPanelId) {
-  // Remove active class from sibling buttons and panels
-  const tabBar = btn.parentElement;
+  // Find the enclosing tab-panel container (e.g. #tab-labels or #tab-aux)
+  const tabContainer = btn.closest(".tab-panel") || document;
+  const tabBar = btn.closest(".sub-tab-bar") || btn.parentElement;
+
+  // Remove active class from sibling buttons and panels within this tab
   tabBar
     .querySelectorAll(".sub-tab-btn")
     .forEach((b) => b.classList.remove("active"));
-  tabBar.parentElement
+  tabContainer
     .querySelectorAll(".sub-panel")
     .forEach((p) => p.classList.remove("active"));
 
   // Add active class to clicked button and target panel
   btn.classList.add("active");
-  document.getElementById(targetPanelId).classList.add("active");
+  const target = document.getElementById(targetPanelId);
+  if (target) {
+    target.classList.add("active");
+  }
 }
 
 // --- FILE INGESTION ---
@@ -95,42 +102,57 @@ function processFile(file) {
 }
 
 // --- LIVE ATEM CONNECTION ---
+/**
+ * Builds a virtual BMD XML Document from live ATEM hardware state received via WebSocket.
+ * Complies with strict ATEM Software Control schema (majorVersion=2, minorVersion=1,
+ * Settings parent node, and 8001+ Auxiliary output IDs).
+ * @param {object} state - Hardware state emitted by the ATEM proxy
+ */
 function buildVirtualXML(state) {
   const doc = document.implementation.createDocument(null, "Profile", null);
   const root = doc.documentElement;
   root.setAttribute("majorVersion", "2");
-  root.setAttribute("minorVersion", "2");
+  root.setAttribute("minorVersion", "1");
   
   const productName = (state.info && state.info.productIdentifier) ? state.info.productIdentifier : "ATEM Switcher";
   root.setAttribute("product", productName);
+
+  // Settings container (strict parent for Inputs and Outputs in BMD XML schema)
+  const settingsNode = doc.createElement("Settings");
+  settingsNode.setAttribute("abDirect", "False");
+  settingsNode.setAttribute("cameraAux", "-1");
+  settingsNode.setAttribute("SDI3GOutputLevel", "LevelA");
+  root.appendChild(settingsNode);
 
   const inputsNode = doc.createElement("Inputs");
   const outputsNode = doc.createElement("Outputs");
   
   if (state.inputs) {
     Object.values(state.inputs).forEach(inp => {
-      const node = doc.createElement(inp.inputId >= 1000 ? "Output" : "Input");
-      node.setAttribute("id", inp.inputId);
-      node.setAttribute("longName", inp.longName || `Source ${inp.inputId}`);
-      node.setAttribute("shortName", inp.shortName || `S${inp.inputId}`);
+      const isInternal = inp.inputId >= 1000;
+      const node = doc.createElement(isInternal ? "Output" : "Input");
+      node.setAttribute("id", inp.inputId.toString());
+      node.setAttribute("longName", inp.longName || (isInternal ? `Output ${inp.inputId}` : `Camera ${inp.inputId}`));
+      node.setAttribute("shortName", inp.shortName || (isInternal ? `Out${inp.inputId}` : `Cam${inp.inputId}`));
       
-      if (inp.inputId >= 1000) {
+      if (isInternal) {
         outputsNode.appendChild(node);
       } else {
         inputsNode.appendChild(node);
       }
     });
   }
-  root.appendChild(inputsNode);
-  root.appendChild(outputsNode);
+  settingsNode.appendChild(inputsNode);
+  settingsNode.appendChild(outputsNode);
 
+  // Auxiliaries are top-level Profile children (IDs start at 8001 = Aux 1)
   const auxNode = doc.createElement("Auxiliaries");
   if (state.video && state.video.auxilliaries) {
     state.video.auxilliaries.forEach((sourceId, index) => {
       if (sourceId !== undefined && sourceId !== null) {
         const node = doc.createElement("Auxiliary");
-        node.setAttribute("id", index);
-        node.setAttribute("input", sourceId);
+        node.setAttribute("id", (8001 + index).toString());
+        node.setAttribute("input", sourceId.toString());
         auxNode.appendChild(node);
       }
     });
@@ -139,79 +161,578 @@ function buildVirtualXML(state) {
 
   appState.xmlDoc = doc;
 }
+// --- CREATE FROM SCRATCH ---
+/**
+ * Populates the model selection dropdown with all known ATEM hardware models
+ * and their official Blackmagic Design product names.
+ */
+function initCreateFromScratch() {
+  const select = document.getElementById("model-select");
+  if (!select) return;
+  select.innerHTML = '<option value="">-- Choose an ATEM Switcher Model --</option>';
+
+  // Sort models nicely: Auto Detect first, then alphabetical by official XML product name
+  const entries = Object.entries(MODEL_CAPABILITIES).filter(([name]) => name !== "Auto Detect");
+  entries.sort((a, b) => (a[1].xmlProductName || a[0]).localeCompare(b[1].xmlProductName || b[0]));
+
+  for (const [modelName, caps] of entries) {
+    const option = document.createElement("option");
+    option.value = modelName;
+    option.textContent = caps.xmlProductName || modelName;
+    select.appendChild(option);
+  }
+}
+
+/**
+ * Generates a clean, valid Blackmagic Design ATEM XML profile tree from scratch
+ * matching the selected model's physical capabilities from the Companion database.
+ */
+function handleCreateFromScratch() {
+  const select = document.getElementById("model-select");
+  const modelName = select.value;
+  if (!modelName) {
+    alert("Please select a model first.");
+    return;
+  }
+  
+  const caps = typeof findModelCapabilities === 'function' 
+    ? findModelCapabilities(modelName) 
+    : MODEL_CAPABILITIES[modelName];
+  if (!caps) return;
+
+  const doc = document.implementation.createDocument(null, "Profile", null);
+  const root = doc.documentElement;
+  root.setAttribute("majorVersion", "2");
+  root.setAttribute("minorVersion", "1");
+  
+  // Enforce the exact official XML product name required by ATEM Software Control
+  const pName = caps.xmlProductName || ("ATEM " + modelName);
+  root.setAttribute("product", pName);
+
+  // Settings container (required parent element for Inputs, Outputs, and MultiViews)
+  const settingsNode = doc.createElement("Settings");
+  settingsNode.setAttribute("abDirect", "False");
+  settingsNode.setAttribute("cameraAux", "-1");
+  settingsNode.setAttribute("SDI3GOutputLevel", "LevelB");
+  settingsNode.setAttribute("ftbEnabled", "True");
+  settingsNode.setAttribute("dskTallyOverride", "False");
+  root.appendChild(settingsNode);
+
+  // Inputs & Outputs
+  const outputsNode = doc.createElement("Outputs");
+  if (caps.inputs > 0) {
+    const inputsNode = doc.createElement("Inputs");
+    for (let i = 1; i <= caps.inputs; i++) {
+      const node = doc.createElement("Input");
+      node.setAttribute("id", i);
+      node.setAttribute("shortName", `Cam${i}`);
+      node.setAttribute("longName", `Camera ${i}`);
+      inputsNode.appendChild(node);
+    }
+  
+    if (caps.audioRoutingSources) {
+      caps.audioRoutingSources.forEach(src => {
+          if (src.sourceName && src.sourceName.includes("Thunderbolt")) {
+              const node = doc.createElement("Input");
+              node.setAttribute("id", src.inputId.toString());
+              node.setAttribute("shortName", "TB"); 
+              node.setAttribute("longName", src.sourceName);
+              inputsNode.appendChild(node);
+          }
+      });
+    }
+    settingsNode.appendChild(inputsNode);
+  }
+
+  // Generate basic internal outputs so they appear in Labels tab
+  const defaultOutputs = [
+      { id: "0", longName: "Black", shortName: "BLK" },
+      { id: "1000", longName: "Color Bars", shortName: "BARS" }
+  ];
+
+  const meCount = caps.mes || 1;
+  const mpCount = meCount >= 2 ? 4 : 2;
+
+  for (let i = 1; i <= 2; i++) {
+      defaultOutputs.push({ id: (2000 + i).toString(), longName: `Color ${i}`, shortName: `COL${i}` });
+  }
+  for (let i = 1; i <= mpCount; i++) {
+      let offset = (i - 1) * 10;
+      defaultOutputs.push({ id: (3010 + offset).toString(), longName: `Media Player ${i}`, shortName: `MP${i}` });
+      defaultOutputs.push({ id: (3011 + offset).toString(), longName: `Media Player ${i} Key`, shortName: `MP${i}K` });
+  }
+  for (let i = 1; i <= meCount; i++) {
+      let offset = (i - 1) * 10;
+      defaultOutputs.push({ id: (10010 + offset).toString(), longName: meCount === 1 ? "Program" : `ME ${i}`, shortName: meCount === 1 ? "PGM" : `M/E${i}` });
+      defaultOutputs.push({ id: (10011 + offset).toString(), longName: meCount === 1 ? "Preview" : `ME ${i} PVW`, shortName: meCount === 1 ? "PVW" : `PVW${i}` });
+  }
+  
+  const cfCount = Math.max(2, meCount); // Usually 2 on 1M/E, 4 on 4M/E
+  for (let i = 1; i <= cfCount; i++) {
+      defaultOutputs.push({ id: (7000 + i).toString(), longName: `Clean Feed ${i}`, shortName: `CFD${i}` });
+  }
+
+  const ssrcCount = caps.ssrcCount || (caps.hasSuperSource ? 1 : 0);
+  if (ssrcCount > 0) {
+      for (let i = 1; i <= ssrcCount; i++) {
+          defaultOutputs.push({ id: (6000 + i - 1).toString(), longName: ssrcCount > 1 ? `SuperSource ${i}` : "SuperSource", shortName: ssrcCount > 1 ? `SS${i}` : "SSRC" });
+      }
+  }
+  
+  if (caps.multiviews > 0) {
+      for (let i = 1; i <= caps.multiviews; i++) {
+          defaultOutputs.push({ id: (9000 + i).toString(), longName: `Multiview ${i}`, shortName: `MV${i}` });
+      }
+  }
+
+  // Auxiliaries
+  if (caps.routingOutputs && caps.routingOutputs.length > 0) {
+    const auxNode = doc.createElement("Auxiliaries");
+    caps.routingOutputs.forEach((outInfo, i) => {
+      let id = (8001 + i).toString();
+      let defaultLabel = outInfo.name || `Auxiliary ${i+1}`;
+      let defaultShort = `Ax${i+1}`;
+      
+      const nLower = defaultLabel.toLowerCase();
+      if (nLower.includes("webcam") || nLower.includes("thunderbolt")) {
+          const count = caps.routingOutputs.slice(0, i).filter(o => o.name.toLowerCase().includes("webcam") || o.name.toLowerCase().includes("thunderbolt")).length;
+          id = (8200 + count).toString();
+          defaultShort = nLower.includes("thunderbolt") ? `TB${count+1}` : `WEBC`;
+      }
+      
+      const node = doc.createElement("Auxiliary");
+      node.setAttribute("id", id);
+      node.setAttribute("input", "10010"); // Program by default
+      auxNode.appendChild(node);
+      
+      defaultOutputs.push({ id: id, longName: defaultLabel, shortName: defaultShort });
+    });
+    root.appendChild(auxNode);
+  } else if (caps.aux > 0) {
+    const auxNode = doc.createElement("Auxiliaries");
+    for (let i = 0; i < caps.aux; i++) {
+      let id = (8001 + i).toString();
+      let defaultLabel = `Auxiliary ${i+1}`;
+      let defaultShort = `Ax${i+1}`;
+      
+      // Fallback for older models without routingOutputs
+      const isMiniSDI = pName.includes("Mini") || pName.includes("SDI");
+      if (isMiniSDI && i === caps.aux - 1) {
+          id = "8200";
+          if (pName.includes("G2")) {
+              defaultLabel = "Thunderbolt 1";
+              defaultShort = "TB1";
+          } else {
+              defaultLabel = "USB Webcam Out";
+              defaultShort = "WEBC";
+          }
+      }
+      
+      // Aux Routing
+      const node = doc.createElement("Auxiliary");
+      node.setAttribute("id", id);
+      node.setAttribute("input", "10010"); // Program by default
+      auxNode.appendChild(node);
+      
+      // Aux Naming
+      defaultOutputs.push({ id: id, longName: defaultLabel, shortName: defaultShort });
+    }
+    root.appendChild(auxNode);
+  }
+
+  // Append Outputs node
+  defaultOutputs.forEach(out => {
+      const node = doc.createElement("Output");
+      node.setAttribute("id", out.id);
+      node.setAttribute("longName", out.longName);
+      node.setAttribute("shortName", out.shortName);
+      outputsNode.appendChild(node);
+  });
+  settingsNode.appendChild(outputsNode);
+
+  // MultiViews
+  if (caps.multiviews > 0) {
+    const mvsNode = doc.createElement("MultiViews");
+    const isNumericLayout = caps.mvLayoutType === "numeric";
+    const winCount = isNumericLayout ? 16 : 10;
+
+    for (let i = 0; i < caps.multiviews; i++) {
+      const node = doc.createElement("MultiView");
+      node.setAttribute("index", i.toString());
+      if (isNumericLayout) {
+        node.setAttribute("LayoutID", "13"); // Standard Quad/MultiView layout
+        node.setAttribute("vuMeterOpacity", "1");
+        node.setAttribute("borderColour", "0.59,0.59,0.59,1");
+      } else {
+        node.setAttribute("layout", "ProgramBottom");
+        node.setAttribute("vuMeterOpacity", "1");
+        node.setAttribute("programPreviewSwapped", "False");
+      }
+      
+      const meIndex = Math.min(i, (caps.mes || 1) - 1);
+      const prgId = (10010 + (meIndex * 10)).toString();
+      const prvId = (10011 + (meIndex * 10)).toString();
+      
+      const windowsNode = doc.createElement("Windows");
+      for(let w = 0; w < winCount; w++) {
+          const win = doc.createElement("Window");
+          win.setAttribute("index", w.toString());
+          if (w === 0) {
+              win.setAttribute("input", prvId); // Window 0 is usually Preview
+          } else if (w === 1) {
+              win.setAttribute("input", prgId); // Window 1 is usually Program
+          } else {
+              const camId = (w - 1).toString();
+              win.setAttribute("input", parseInt(camId) <= caps.inputs ? camId : "0");
+          }
+          windowsNode.appendChild(win);
+      }
+      node.appendChild(windowsNode);
+      mvsNode.appendChild(node);
+    }
+    
+    settingsNode.appendChild(mvsNode);
+  }
+
+  // Audio mapping
+  if (caps.audioEngine === "fairlight") {
+      const flNode = doc.createElement("FairlightAudioMixer");
+      if (caps.hasAudioMapping) {
+          const mapNode = doc.createElement("AudioMapping");
+          const mapOuts = doc.createElement("AudioOutputs");
+          
+          if (caps.audioRoutingOutputs && caps.audioRoutingOutputs.length > 0) {
+              caps.audioRoutingOutputs.forEach(outInfo => {
+                  outInfo.channelPairs.forEach(pairIdx => {
+                      const chNode = doc.createElement("Output");
+                      const baseId = outInfo.outputId * 65536 + pairIdx; 
+                      chNode.setAttribute("id", baseId.toString());
+                      chNode.setAttribute("sourceId", pairIdx === 0 ? "150798336" : "0"); 
+                      
+                      const leftCh = (pairIdx * 2) + 1;
+                      const rightCh = (pairIdx * 2) + 2;
+                      chNode.setAttribute("name", `${outInfo.outputName} ${leftCh}/${rightCh}`);
+                      mapOuts.appendChild(chNode);
+                  });
+              });
+          }
+          mapNode.appendChild(mapOuts);
+
+          const mapSrcs = doc.createElement("AudioSources");
+          if (caps.audioRoutingSources && caps.audioRoutingSources.length > 0) {
+              caps.audioRoutingSources.forEach(srcInfo => {
+                  if (srcInfo.inputId === 0) {
+                      const srcNode = doc.createElement("Source");
+                      srcNode.setAttribute("id", "0");
+                      srcNode.setAttribute("name", srcInfo.sourceName);
+                      mapSrcs.appendChild(srcNode);
+                  } else {
+                      // Generate 16 channels (8 pairs) for ALL sources
+                      const pairs = srcInfo && srcInfo.channelPairs && srcInfo.channelPairs.length > 0 ? srcInfo.channelPairs : [0];
+                for (let pairIdx of pairs) {
+                          const srcNode = doc.createElement("Source");
+                          const baseId = srcInfo.inputId * 65536 + pairIdx;
+                          srcNode.setAttribute("id", baseId.toString());
+                          const leftCh = (pairIdx * 2) + 1;
+                          const rightCh = (pairIdx * 2) + 2;
+                          let name = srcInfo.sourceName.replace(/\s\d+\/\d+$/, "");
+                          srcNode.setAttribute("name", `${name} ${leftCh}/${rightCh}`);
+                          mapSrcs.appendChild(srcNode);
+                      }
+                  }
+              });
+          }
+          mapNode.appendChild(mapSrcs);
+
+          root.appendChild(mapNode);
+      }
+      
+      // Default Audio Inputs
+      const audioInputsNode = doc.createElement("AudioInputs");
+      const mpCount = (caps.mes || 1) >= 2 ? 4 : 2;
+      const audioSourceIds = Array.from({length: caps.inputs}, (_, i) => (i + 1).toString());
+      for (let i = 1; i <= mpCount; i++) {
+          audioSourceIds.push((3000 + (i * 10)).toString());
+      }
+      audioSourceIds.forEach(id => {
+          const inp = doc.createElement("AudioInput");
+          inp.setAttribute("id", id);
+          inp.setAttribute("configuration", "Stereo");
+          const srcNode = doc.createElement("AudioSource");
+          srcNode.setAttribute("id", "-65280");
+          srcNode.setAttribute("mixOption", "Off");
+          inp.appendChild(srcNode);
+          audioInputsNode.appendChild(inp);
+      });
+      flNode.appendChild(audioInputsNode);
+      
+      root.appendChild(flNode);
+  } else {
+      const audioNode = doc.createElement("AudioMixer");
+      
+      // Default Audio Inputs
+      const audioInputsNode = doc.createElement("AudioInputs");
+      const mpCount = (caps.mes || 1) >= 2 ? 4 : 2;
+      const audioSourceIds = Array.from({length: caps.inputs}, (_, i) => (i + 1).toString());
+      for (let i = 1; i <= mpCount; i++) {
+          audioSourceIds.push((3000 + (i * 10)).toString());
+      }
+      audioSourceIds.forEach(id => {
+          const inp = doc.createElement("AudioInput");
+          inp.setAttribute("id", id);
+          inp.setAttribute("mixOption", "Off");
+          audioInputsNode.appendChild(inp);
+      });
+      audioNode.appendChild(audioInputsNode);
+      
+      root.appendChild(audioNode);
+  }
+
+  // SuperSources (top-level Profile child on switchers with SuperSource DVEs)
+  if (caps.hasSuperSource) {
+      const ssrcNode = doc.createElement("SuperSources");
+      const count = caps.ssrcCount || 1;
+      for (let s = 0; s < count; s++) {
+          const ssrc = doc.createElement("SuperSource");
+          ssrc.setAttribute("index", s.toString());
+          ssrc.setAttribute("artFillInput", "3010");
+          ssrc.setAttribute("artKeyInput", "3011");
+          ssrc.setAttribute("artOption", "Background");
+          ssrc.setAttribute("artPreMultiplied", "False");
+          ssrc.setAttribute("artClip", "50");
+          ssrc.setAttribute("artGain", "70");
+          ssrc.setAttribute("artInvertKey", "False");
+
+          const boxes = doc.createElement("Boxes");
+          for (let b = 0; b < 4; b++) {
+              const box = doc.createElement("Box");
+              box.setAttribute("index", b.toString());
+              box.setAttribute("enabled", b === 0 ? "True" : "False");
+              box.setAttribute("inputSource", "0");
+              box.setAttribute("xPosition", (b % 2 === 0 ? "-8" : "8"));
+              box.setAttribute("yPosition", (b < 2 ? "4.5" : "-4.5"));
+              box.setAttribute("size", "0.5");
+              box.setAttribute("cropped", "False");
+              box.setAttribute("cropTop", "0");
+              box.setAttribute("cropBottom", "0");
+              box.setAttribute("cropLeft", "0");
+              box.setAttribute("cropRight", "0");
+              boxes.appendChild(box);
+          }
+          ssrc.appendChild(boxes);
+          ssrcNode.appendChild(ssrc);
+      }
+      root.appendChild(ssrcNode);
+  }
+
+  // Counters (Display clock / countdown timers on supported switchers)
+  if (caps.hasCounters) {
+      const countersNode = doc.createElement("Counters");
+      const counter = doc.createElement("Counter");
+      counter.setAttribute("index", "0");
+      counter.setAttribute("enabled", "False");
+      counter.setAttribute("mode", "Countdown");
+      counter.setAttribute("autoHide", "False");
+      counter.setAttribute("positionX", "0");
+      counter.setAttribute("positionY", "-6.3");
+      counter.setAttribute("size", "25");
+      counter.setAttribute("opacity", "100");
+      counter.setAttribute("startFromHours", "0");
+      counter.setAttribute("startFromMinutes", "0");
+      counter.setAttribute("startFromSeconds", "0");
+      counter.setAttribute("startFromFrames", "0");
+      countersNode.appendChild(counter);
+      root.appendChild(countersNode);
+  }
+
+  // LiveStream & Record Profile Output block
+  if (caps.hasStreamRecord) {
+      const outputNode = doc.createElement("Output");
+      const streamNode = doc.createElement("LiveStream");
+      streamNode.setAttribute("serviceName", "YouTube RTMP");
+      streamNode.setAttribute("url", "rtmps://a.rtmps.youtube.com/live2");
+      streamNode.setAttribute("key", "");
+      streamNode.setAttribute("streamIdExtensions", "");
+      streamNode.setAttribute("lowLatency", "False");
+      streamNode.setAttribute("streamDownConvertMode", "None");
+
+      const creds = doc.createElement("Credentials");
+      creds.setAttribute("username", "");
+      creds.setAttribute("password", "");
+      streamNode.appendChild(creds);
+
+      const bitrate = doc.createElement("bitrate");
+      bitrate.setAttribute("low", "45000000");
+      bitrate.setAttribute("high", "70000000");
+      streamNode.appendChild(bitrate);
+
+      const audioBitrate = doc.createElement("audioBitrate");
+      audioBitrate.setAttribute("low", "128000");
+      audioBitrate.setAttribute("high", "128000");
+      streamNode.appendChild(audioBitrate);
+
+      outputNode.appendChild(streamNode);
+
+      const recordNode = doc.createElement("Record");
+      const safePrefix = pName.replace(/[^a-zA-Z0-9]/g, "_");
+      recordNode.setAttribute("filename", safePrefix);
+      recordNode.setAttribute("recordInAllCameras", "False");
+      recordNode.setAttribute("recordAllISOInputs", caps.hasIso ? "True" : "False");
+      outputNode.appendChild(recordNode);
+
+      root.appendChild(outputNode);
+  }
+  
+  // Custom Fallback Prompting for Inputs/Aux
+  if (caps.isCustom) {
+      const customInputs = prompt("Enter number of External Inputs:", "8");
+      if (customInputs) {
+          let inputsNode = settingsNode.querySelector("Inputs");
+          if (!inputsNode) {
+              inputsNode = doc.createElement("Inputs");
+              settingsNode.appendChild(inputsNode);
+          }
+          inputsNode.innerHTML = '';
+          for (let i = 1; i <= parseInt(customInputs); i++) {
+              const node = doc.createElement("Input");
+              node.setAttribute("id", i.toString());
+              node.setAttribute("longName", `Camera ${i}`);
+              node.setAttribute("shortName", `Cam${i}`);
+              inputsNode.appendChild(node);
+          }
+      }
+      
+      const customAux = prompt("Enter number of Aux Outputs:", "2");
+      if (customAux) {
+          let auxNode = root.querySelector("Auxiliaries");
+          if (!auxNode) {
+              auxNode = doc.createElement("Auxiliaries");
+              root.appendChild(auxNode);
+          }
+          auxNode.innerHTML = '';
+          for (let i = 0; i < parseInt(customAux); i++) {
+              const node = doc.createElement("Auxiliary");
+              node.setAttribute("id", (8001 + i).toString());
+              node.setAttribute("input", "10010");
+              auxNode.appendChild(node);
+          }
+      }
+  }
+  
+  const serializer = new XMLSerializer();
+  const xmlString = serializer.serializeToString(doc);
+  parseATEMXML(xmlString);
+}
+
+initCreateFromScratch();
 
 // --- PARSER ---
 function parseATEMXML(xmlString) {
   const parser = new DOMParser();
   appState.xmlDoc = parser.parseFromString(xmlString, "text/xml");
-
-
+  appState.originalXmlString = xmlString; // Store pristine copy for resetting
 
   analyzeATEMProfile(appState.xmlDoc);
   cacheInputNames();
   cacheAudioMixOptions();
   updateDashboardUI();
+  if (typeof showToast === "function") {
+    showToast(`Loaded: ${appState.productName}`);
+  }
 }
 
+/**
+ * Analyzes the uploaded/active XML document to determine hardware generation,
+ * audio engine (Fairlight vs legacy), SuperSource engines, and Multiview layout formats.
+ * Cross-references with the official Companion database for maximum accuracy.
+ * @param {Document} xmlDoc - Active XML DOM Document
+ */
 function analyzeATEMProfile(xmlDoc) {
   const profileNode = xmlDoc.querySelector("Profile");
   appState.productName = profileNode
-    ? profileNode.getAttribute("product")
+    ? (profileNode.getAttribute("product") || "Unknown ATEM")
     : "Unknown ATEM";
+
+  // Resolve authoritative hardware capabilities from Companion/BMD database
+  const caps = typeof findModelCapabilities === 'function'
+    ? findModelCapabilities(appState.productName)
+    : (typeof MODEL_CAPABILITIES !== 'undefined' ? MODEL_CAPABILITIES[appState.productName] : null);
 
   const productUpper = appState.productName.toUpperCase();
 
+  // Audio mapping support (MADI / Fairlight routing table)
   appState.hasAudioMapping =
     xmlDoc.querySelector("AudioMapping > AudioOutputs > Output") !== null ||
-    xmlDoc.querySelector("AudioMapping AudioOutputs Output, AudioMapping > Output") !== null;
+    xmlDoc.querySelector("AudioMapping AudioOutputs Output, AudioMapping > Output") !== null ||
+    (caps ? caps.hasAudioMapping : false);
 
-  appState.audioEngine = (xmlDoc.querySelector("FairlightAudioMixer") || appState.hasAudioMapping || productUpper.includes("CONSTELLATION") || productUpper.includes("EXTREME"))
+  // Determine whether Fairlight engine or legacy AudioMixer is in use
+  appState.audioEngine = (xmlDoc.querySelector("FairlightAudioMixer") || 
+                          appState.hasAudioMapping || 
+                          (caps && caps.audioEngine === "fairlight") || 
+                          productUpper.includes("CONSTELLATION") || 
+                          productUpper.includes("EXTREME"))
     ? "fairlight"
     : "legacy";
   appState.hasFairlight = appState.audioEngine === "fairlight";
 
-  appState.superSourceCount = xmlDoc.querySelectorAll(
-    "SuperSources > SuperSource",
-  ).length;
+  // SuperSource engines
+  appState.superSourceCount = xmlDoc.querySelectorAll("SuperSources > SuperSource").length;
+  if (appState.superSourceCount === 0 && caps && caps.hasSuperSource) {
+    appState.superSourceCount = caps.ssrcCount || 1;
+  }
   appState.hasSuperSource = appState.superSourceCount > 0;
 
+  // MADI presence (Constellation 8K / 4M/E high-density audio)
   appState.hasMadi =
-    appState.xmlDoc.querySelector("AudioMapping AudioOutputs Output[name^='MADI'], AudioMapping Output[name^='MADI']") !== null;
+    xmlDoc.querySelector("AudioMapping AudioOutputs Output[name^='MADI'], AudioMapping Output[name^='MADI']") !== null ||
+    productUpper.includes("8K") ||
+    productUpper.includes("4 M/E");
+
+  // Network ingest (SRT / RTMP streaming inputs on HD8 series)
   appState.hasNetworkIngest =
     xmlDoc.querySelector("StreamingInputs") !== null ||
     productUpper.includes("HD8");
+
+  // ISO Recording detection
   appState.hasIso =
     productUpper.includes("ISO") ||
     productUpper.includes("ATEM SDI EXTREME") ||
     productUpper.includes("ATEM SDI PRO") ||
+    (caps ? caps.hasIso : false) ||
     xmlDoc.querySelector("RecordAllInputs") !== null ||
     xmlDoc.querySelector("Record[recordAllISOInputs]") !== null;
+
+  // Streaming / USB webcam recording features
   appState.hasStreamRecord =
     xmlDoc.querySelector("LiveStream") !== null ||
     xmlDoc.querySelector("Record") !== null ||
     appState.hasIso ||
+    (caps ? caps.hasStreamRecord : false) ||
     productUpper.includes("MINI PRO") ||
     productUpper.includes("EXTREME") ||
     productUpper.includes("HD8");
   
-  appState.hasCounters = xmlDoc.querySelector("Counters") !== null || xmlDoc.querySelector("Counters > Counter") !== null;
+  // Counters (display clock / timers)
+  appState.hasCounters = xmlDoc.querySelector("Counters") !== null || (caps ? caps.hasCounters : false);
 
+  // Multiview layout engine (numeric LayoutID bitmask on modern vs text layout name on legacy)
   const sampleMV = xmlDoc.querySelector("MultiView");
   if (sampleMV) {
-    appState.mvLayoutType = sampleMV.hasAttribute("LayoutID")
-      ? "numeric"
-      : "text";
-    appState.generation = sampleMV.hasAttribute("LayoutID")
-      ? "modern"
-      : "legacy";
+    appState.mvLayoutType = sampleMV.hasAttribute("LayoutID") ? "numeric" : "text";
+    appState.generation = sampleMV.hasAttribute("LayoutID") ? "modern" : "legacy";
+  } else if (caps) {
+    appState.mvLayoutType = caps.mvLayoutType || "text";
+    appState.generation = caps.mvLayoutType === "numeric" ? "modern" : "legacy";
   } else {
     appState.mvLayoutType = "text";
     appState.generation = "legacy";
   }
-  appState.multiviewCount = xmlDoc.querySelectorAll(
-    "MultiViews > MultiView",
-  ).length;
 
+  const mvs = xmlDoc.querySelectorAll("MultiViews > MultiView");
+  appState.multiviewCount = mvs.length > 0 ? mvs.length : (caps ? caps.multiviews : 1);
+
+  // Switcher classification tier
   if (appState.productName.includes("Constellation"))
     appState.tier = "Modern High-Density / MADI";
   else if (appState.productName.includes("Extreme"))
@@ -223,10 +744,13 @@ function analyzeATEMProfile(xmlDoc) {
   else appState.tier = "Legacy / Classic Broadcast";
 }
 
+/**
+ * Caches short and long input names from XML to prevent repeated DOM queries.
+ */
 function cacheInputNames() {
   appState.inputsMap.clear();
 
-  // 1. Cache standard inputs (Cameras, Media Players)
+  // 1. Cache standard video inputs (Cameras, Media Players, Thunderbolt)
   const inputs = appState.xmlDoc.querySelectorAll("Inputs > Input");
   inputs.forEach((inp) => {
     appState.inputsMap.set(
@@ -244,25 +768,29 @@ function cacheInputNames() {
     );
   });
 
-  // Fallbacks just in case they are missing from the XML
-  if (!appState.inputsMap.has("10010"))
-    appState.inputsMap.set("10010", "Program");
-  if (!appState.inputsMap.has("10011"))
-    appState.inputsMap.set("10011", "Preview");
-  if (!appState.inputsMap.has("9101"))
-    appState.inputsMap.set("9101", "Record Status");
-  if (!appState.inputsMap.has("9102"))
-    appState.inputsMap.set("9102", "Stream Status");
-  if (!appState.inputsMap.has("9103"))
-    appState.inputsMap.set("9103", "Audio Status");
+  // Fallbacks just in case standard IDs are absent from a stripped XML
+  if (!appState.inputsMap.has("10010")) appState.inputsMap.set("10010", "Program");
+  if (!appState.inputsMap.has("10011")) appState.inputsMap.set("10011", "Preview");
+  if (appState.hasStreamRecord) {
+    if (!appState.inputsMap.has("9101")) appState.inputsMap.set("9101", "Record Status");
+    if (!appState.inputsMap.has("9102")) appState.inputsMap.set("9102", "Stream Status");
+    if (!appState.inputsMap.has("9103")) appState.inputsMap.set("9103", "Audio Status");
+  }
 }
 
+/**
+ * Caches active audio mixOption ('On', 'AudioFollowVideo', 'Off') for every input.
+ * Accurately inspects Fairlight audio sources (stereo -65280, mono -256) or legacy mixer inputs.
+ */
 function cacheAudioMixOptions() {
   appState.mixOptionsMap.clear();
   
   if (appState.hasFairlight) {
     appState.xmlDoc.querySelectorAll("FairlightAudioMixer AudioInputs AudioInput").forEach(inp => {
-      const src = inp.querySelector("AudioSource");
+      // Priority: standard stereo pair (-65280), split mono channel (-256), or first audio source
+      const src = inp.querySelector('AudioSource[id="-65280"]') || 
+                  inp.querySelector('AudioSource[id="-256"]') || 
+                  inp.querySelector("AudioSource");
       if (src && src.hasAttribute("mixOption")) {
         appState.mixOptionsMap.set(inp.getAttribute("id"), src.getAttribute("mixOption"));
       }
@@ -370,7 +898,35 @@ function updateDashboardUI() {
   buildStreamRecordPanel();
   buildCountersPanel();
 
-  document.getElementById("nav-labels").click();
+  // Keep ingestion UI accessible so user can load another XML or create from scratch without reloading
+  const dropZone = document.getElementById("drop-zone");
+  if (dropZone) {
+    dropZone.style.display = "block";
+    dropZone.classList.add("drop-zone-active");
+    const h2 = dropZone.querySelector("h2");
+    if (h2) h2.innerText = "Load a Different ATEM XML";
+    const p = dropZone.querySelector("p");
+    if (p) p.innerText = "Drop another .xml file here or click to switch configuration";
+  }
+  
+  const createZone = document.querySelector(".create-scratch-zone");
+  if (createZone) createZone.style.display = "block";
+  
+  const usageCard = document.querySelector(".card-usage");
+  if (usageCard) usageCard.style.display = "block";
+
+  // Ensure system-info is visible
+  document.getElementById("system-info").style.display = "block";
+
+  // Display top header Reset button
+  const resetBtn = document.getElementById("btn-reset-session");
+  if (resetBtn) resetBtn.style.display = "inline-flex";
+  
+  // Force activate overview tab
+  const overviewBtn = document.querySelector('[data-target="tab-overview"]');
+  if (overviewBtn) {
+      overviewBtn.click();
+  }
 }
 
 // 1. Labels Tables (Inputs & Outputs)
@@ -416,6 +972,17 @@ function buildLabelsTable() {
     const shortName = escapeHTML(output.getAttribute("shortName") || "");
     const longName = escapeHTML(output.getAttribute("longName") || "");
 
+    const pName = (appState.productName || "").toLowerCase();
+    const isCompact = pName.includes("mini") || pName.includes("extreme") || pName.includes("sdi");
+
+    // Hide 9xxx sources, EXCEPT Multiviews on compact models (which can route MV to Aux and rename it)
+    if (parseInt(id) >= 9000 && parseInt(id) < 10000) {
+      const isMv = parseInt(id) >= 9001 && parseInt(id) <= 9099;
+      if (!isMv || !isCompact) {
+        return;
+      }
+    }
+    
     const tr = document.createElement("tr");
     tr.innerHTML = `
                     <td>${id}</td>
@@ -428,25 +995,60 @@ function buildLabelsTable() {
 
 // Get the mixOption for a given input ID
 function getAudioMixOption(inputId) {
-  return appState.mixOptionsMap.get(inputId) || "unknown";
+  return appState.mixOptionsMap.get(inputId) || "Off";
 }
 
 // Set the mixOption for a given input ID and update button styles
 function updateAudioMixOption(inputId, newValue, clickedBtn) {
   // Fairlight path
-  const fairlightSource = appState.xmlDoc.querySelector(
-    `FairlightAudioMixer AudioInputs AudioInput[id="${inputId}"] AudioSource`,
-  );
-  if (fairlightSource) {
-    fairlightSource.setAttribute("mixOption", newValue);
-  }
-
-  // Legacy path
-  const legacyInput = appState.xmlDoc.querySelector(
-    `AudioMixer AudioInputs AudioInput[id="${inputId}"]`,
-  );
-  if (legacyInput) {
-    legacyInput.setAttribute("mixOption", newValue);
+  if (appState.audioEngine === "fairlight") {
+      let flNode = appState.xmlDoc.querySelector("FairlightAudioMixer");
+      if (!flNode) {
+          flNode = appState.xmlDoc.createElement("FairlightAudioMixer");
+          appState.xmlDoc.documentElement.appendChild(flNode);
+      }
+      let inputsNode = flNode.querySelector("AudioInputs");
+      if (!inputsNode) {
+          inputsNode = appState.xmlDoc.createElement("AudioInputs");
+          flNode.appendChild(inputsNode);
+      }
+      let inpNode = inputsNode.querySelector(`AudioInput[id="${inputId}"]`);
+      if (!inpNode) {
+          inpNode = appState.xmlDoc.createElement("AudioInput");
+          inpNode.setAttribute("id", inputId);
+          inpNode.setAttribute("configuration", "Stereo");
+          inputsNode.appendChild(inpNode);
+      }
+      const srcNodes = inpNode.querySelectorAll("AudioSource");
+      if (srcNodes.length === 0) {
+          const isMono = inpNode.getAttribute("configuration") === "Mono";
+          const srcNode = appState.xmlDoc.createElement("AudioSource");
+          // Blackmagic uses -65280 (0xFF00) for stereo pairs, -256 for mono
+          srcNode.setAttribute("id", isMono ? "-256" : "-65280");
+          srcNode.setAttribute("mixOption", newValue);
+          inpNode.appendChild(srcNode);
+      } else {
+          srcNodes.forEach(src => src.setAttribute("mixOption", newValue));
+      }
+  } else {
+      // Legacy path (<AudioMixer>)
+      let mixNode = appState.xmlDoc.querySelector("AudioMixer");
+      if (!mixNode) {
+          mixNode = appState.xmlDoc.createElement("AudioMixer");
+          appState.xmlDoc.documentElement.appendChild(mixNode);
+      }
+      let inputsNode = mixNode.querySelector("AudioInputs");
+      if (!inputsNode) {
+          inputsNode = appState.xmlDoc.createElement("AudioInputs");
+          mixNode.appendChild(inputsNode);
+      }
+      let inpNode = inputsNode.querySelector(`AudioInput[id="${inputId}"]`);
+      if (!inpNode) {
+          inpNode = appState.xmlDoc.createElement("AudioInput");
+          inpNode.setAttribute("id", inputId);
+          inputsNode.appendChild(inpNode);
+      }
+      inpNode.setAttribute("mixOption", newValue);
   }
   
   appState.mixOptionsMap.set(inputId, newValue);
@@ -498,25 +1100,83 @@ function buildAuxMatrix() {
     return;
   }
 
-  // --- INPUTS MATRIX ---
-  const inputIds = Array.from(
-    appState.xmlDoc.querySelectorAll("Inputs > Input"),
-  ).map((inp) => inp.getAttribute("id"));
+  const caps = typeof findModelCapabilities === 'function'
+    ? findModelCapabilities(appState.productName)
+    : (typeof MODEL_CAPABILITIES !== 'undefined' && MODEL_CAPABILITIES[appState.productName] 
+        ? MODEL_CAPABILITIES[appState.productName] 
+        : { inputs: 8, multiviews: 1, hasSuperSource: false });
+  const externalInputCount = caps.inputs || 8;
+  
+  // External Inputs (1 to N)
+  const externalIds = [];
+  for (let i = 1; i <= externalInputCount; i++) {
+      externalIds.push(i.toString());
+  }
 
+  // Internal Sources
+  const internalIds = [];
+  internalIds.push({ id: "0", label: "Black" });
+  internalIds.push({ id: "1000", label: "Color Bars" });
+  internalIds.push({ id: "2001", label: "Color 1" });
+  internalIds.push({ id: "2002", label: "Color 2" });
+  
+  const mpCount = (caps.mes && caps.mes >= 2) || (externalInputCount > 20) ? 4 : 2;
+  for (let i = 1; i <= mpCount; i++) {
+      internalIds.push({ id: "30" + i + "0", label: "Media Player " + i });
+      internalIds.push({ id: "30" + i + "1", label: "Media Player " + i + " Key" });
+  }
+  
+  if (caps.hasSuperSource) {
+      internalIds.push({ id: "6000", label: "SuperSource 1" });
+      if (caps.ssrcCount >= 2 || externalInputCount >= 40) {
+          internalIds.push({ id: "6001", label: "SuperSource 2" });
+      }
+  }
+  
+  const meCount = caps.mes || ((externalInputCount >= 40) ? 4 : (externalInputCount >= 20 ? 2 : 1));
+  const uskCount = caps.usks || (meCount >= 4 ? 4 : (meCount >= 2 ? 2 : 1));
+  
+  for (let i = 1; i <= meCount; i++) {
+      internalIds.push({ id: (7000 + i).toString(), label: `Clean Feed ${i}` });
+  }
+  
+  for (let i = 1; i <= meCount; i++) {
+      internalIds.push({ id: "100" + i + "0", label: "ME " + i + " Program" });
+      internalIds.push({ id: "100" + i + "1", label: "ME " + i + " Preview" });
+  }
+  
+  for (let i = 1; i <= meCount; i++) {
+      for (let k = 1; k <= uskCount; k++) {
+          const maskId = 4000 + ((i - 1) * 40) + (k * 10); 
+          internalIds.push({ id: maskId.toString(), label: `ME ${i} Key ${k} Mask` });
+      }
+  }
+  
+  const dskCount = caps.dsks || ((externalInputCount >= 40) ? 4 : 2);
+  for (let i = 1; i <= dskCount; i++) {
+      internalIds.push({ id: (5000 + (i * 10)).toString(), label: `DSK ${i} Mask` });
+  }
+  
+  const pName = (appState.productName || "").toLowerCase();
+  if (pName.includes("mini") || pName.includes("extreme") || pName.includes("sdi")) {
+      const mvCount = caps.multiviews || 1;
+      for (let i = 1; i <= mvCount; i++) {
+          internalIds.push({ id: "900" + i, label: "Multiview " + i });
+      }
+  }
+
+  // --- INPUTS MATRIX ---
   let inHeaderHTML = "<thead><tr><th>Outputs \\ Inputs</th>";
-  inputIds.forEach((id) => {
-    inHeaderHTML += `<th>${escapeHTML(appState.inputsMap.get(id) || "ID: " + id)}</th>`;
+  externalIds.forEach((id) => {
+    inHeaderHTML += '<th>' + escapeHTML(appState.inputsMap.get(id) || "Input " + id) + '</th>';
   });
   inHeaderHTML += "</tr></thead><tbody>";
 
-  // --- OUTPUTS MATRIX ---
-  const outputIds = Array.from(
-    appState.xmlDoc.querySelectorAll("Outputs > Output"),
-  ).map((out) => out.getAttribute("id"));
-
+  // --- OUTPUTS (INTERNAL) MATRIX ---
   let outHeaderHTML = "<thead><tr><th>Outputs \\ Internal Sources</th>";
-  outputIds.forEach((id) => {
-    outHeaderHTML += `<th>${escapeHTML(appState.inputsMap.get(id) || "ID: " + id)}</th>`;
+  internalIds.forEach((src) => {
+    const customName = appState.inputsMap.get(src.id);
+    outHeaderHTML += '<th>' + escapeHTML(customName || src.label) + '</th>';
   });
   outHeaderHTML += "</tr></thead><tbody>";
 
@@ -527,44 +1187,47 @@ function buildAuxMatrix() {
   auxes.forEach((aux, i) => {
     const auxId = aux.getAttribute("id");
     const currentInput = aux.getAttribute("input");
-
-    // Lookup the assigned output name, fallback to "Aux + ID" if blank
-    const auxName = appState.inputsMap.get(auxId) || `Aux ${auxId}`;
+    const parsedAuxId = parseInt(auxId, 10);
+    const pName = (appState.productName || "").toLowerCase();
+    const isMiniSDI = pName.includes("mini") || pName.includes("sdi");
+    let fallbackAuxName;
+    if (parsedAuxId === 8200 && isMiniSDI) {
+      fallbackAuxName = pName.includes("g2") ? "Thunderbolt 1" : "USB Webcam Out";
+    } else if (parsedAuxId >= 8001 && parsedAuxId <= 8099 && isMiniSDI) {
+      fallbackAuxName = (pName.includes("sdi") ? "SDI Out " : "HDMI Out ") + (parsedAuxId - 8000);
+    } else if (parsedAuxId >= 8001 && parsedAuxId <= 8099) {
+      fallbackAuxName = "Aux " + (parsedAuxId - 8000);
+    } else {
+      fallbackAuxName = "Aux " + auxId;
+    }
+    const auxName = appState.inputsMap.get(auxId) || fallbackAuxName;
 
     // Inputs row
-    let inRow = `<tr><td>${escapeHTML(auxName)}</td>`;
-    inputIds.forEach((inId) => {
+    let inRow = '<tr><td>' + escapeHTML(auxName) + '</td>';
+    externalIds.forEach((inId) => {
       const isChecked = currentInput === inId ? "checked" : "";
-      const uniqueId = `aux_in_${auxId}_${inId}`;
-      inRow += `
-                        <td>
-                            <input type="radio" class="cp-radio" name="auxgrp_${auxId}" id="${uniqueId}" ${isChecked} onchange="updateAux('${auxId}', '${inId}', ${i})">
-                            <label class="cp-label" for="${uniqueId}" title="Route ${escapeHTML(appState.inputsMap.get(inId))} to ${escapeHTML(auxName)}"></label>
-                        </td>
-                    `;
+      const uniqueId = 'aux_in_' + auxId + '_' + inId;
+      inRow += '<td><input type="radio" class="cp-radio" name="auxgrp_' + auxId + '" id="' + uniqueId + '" ' + isChecked + ' onchange="updateAux(\'' + auxId + '\', \'' + inId + '\', ' + i + ')"><label class="cp-label" for="' + uniqueId + '" title="Route ' + escapeHTML(appState.inputsMap.get(inId) || "Input "+inId) + ' to ' + escapeHTML(auxName) + '"></label></td>';
     });
-    inRow += `</tr>`;
+    inRow += '</tr>';
     inBodyHTML += inRow;
 
-    // Outputs row
-    let outRow = `<tr><td>${escapeHTML(auxName)}</td>`;
-    outputIds.forEach((outId) => {
+    // Internal Sources row
+    let outRow = '<tr><td>' + escapeHTML(auxName) + '</td>';
+    internalIds.forEach((src) => {
+      const outId = src.id;
       const isChecked = currentInput === outId ? "checked" : "";
-      const uniqueId = `aux_out_${auxId}_${outId}`;
-      outRow += `
-                        <td>
-                            <input type="radio" class="cp-radio" name="auxgrp_${auxId}" id="${uniqueId}" ${isChecked} onchange="updateAux('${auxId}', '${outId}', ${i})">
-                            <label class="cp-label" for="${uniqueId}" title="Route ${escapeHTML(appState.inputsMap.get(outId))} to ${escapeHTML(auxName)}"></label>
-                        </td>
-                    `;
+      const uniqueId = 'aux_out_' + auxId + '_' + outId;
+      outRow += '<td><input type="radio" class="cp-radio" name="auxgrp_' + auxId + '" id="' + uniqueId + '" ' + isChecked + ' onchange="updateAux(\'' + auxId + '\', \'' + outId + '\', ' + i + ')"><label class="cp-label" for="' + uniqueId + '" title="Route ' + escapeHTML(appState.inputsMap.get(outId) || src.label) + ' to ' + escapeHTML(auxName) + '"></label></td>';
     });
-    outRow += `</tr>`;
+    outRow += '</tr>';
     outBodyHTML += outRow;
   });
 
   if (inTable) inTable.innerHTML = inHeaderHTML + inBodyHTML + "</tbody>";
   if (outTable) outTable.innerHTML = outHeaderHTML + outBodyHTML + "</tbody>";
 }
+
 
 function updateAux(auxId, newInputId, auxIndex) {
   const auxNode = appState.xmlDoc.querySelector(
@@ -614,14 +1277,11 @@ function buildAudioMapping() {
   // Collect available audio sources from AudioMapping > AudioSources > Source
   const audioSources = collectAudioSources();
 
-  // Group outputs by name prefix (e.g. "MADI1", "Aux1", "Aux2", ...)
+  // Group outputs by prefix (e.g. "Aux", "MADI", "Program", "Headphones")
   const groups = new Map();
   audioOutputNodes.forEach((node) => {
     const name = node.getAttribute("name") || "";
-    // Extract group prefix: everything before the last space + channel pair
-    // e.g. "Aux1 1/2" => "Aux1", "MADI1 15 1/2" => "MADI1 15" ... actually we want "MADI1"
-    // Pattern: extract the alphabetic+numeric prefix before the channel pair
-    const match = name.match(/^(.+?)\s+\d+\/\d+$/);
+    const match = name.match(/^([a-zA-Z]+)/);
     const groupKey = match ? match[1] : name;
 
     if (!groups.has(groupKey)) groups.set(groupKey, []);
@@ -632,21 +1292,10 @@ function buildAudioMapping() {
   groups.forEach((outputs, groupName) => {
     const currentIdx = tabIdx++;
 
-    // Resolve "actual name" for Auxiliaries
-    let displayName = groupName;
-    const auxMatch = groupName.match(/^Aux(\d+)$/i);
-    if (auxMatch) {
-      const auxId = 8000 + parseInt(auxMatch[1], 10);
-      const actualName = appState.inputsMap.get(auxId.toString());
-      if (actualName) {
-        displayName = actualName;
-      }
-    }
-
     // Tab button
     const btn = document.createElement("button");
     btn.className = "audio-output-tab" + (currentIdx === 0 ? " active" : "");
-    btn.textContent = displayName;
+    btn.textContent = groupName;
     btn.setAttribute("data-audio-idx", currentIdx);
     btn.addEventListener("click", () => switchAudioOutputTab(currentIdx));
     tabBar.appendChild(btn);
@@ -655,60 +1304,114 @@ function buildAudioMapping() {
     const panel = document.createElement("div");
     panel.className =
       "audio-output-panel" + (currentIdx === 0 ? " active" : "");
-    panel.id = `audio-panel-${currentIdx}`;
+    panel.id = "audio-panel-" + currentIdx;
 
     const section = document.createElement("div");
     section.className = "audio-map-section";
 
-    // Determine type badge from name
-    let typeBadge = "SDI";
-    if (groupName.toLowerCase().includes("madi")) typeBadge = "MADI";
-    else if (groupName.toLowerCase().includes("aux")) typeBadge = "AUX";
-    else if (groupName.toLowerCase().includes("hdmi")) typeBadge = "HDMI";
-
-    section.innerHTML = `<h3>${escapeHTML(displayName)} <span class="output-badge">${typeBadge}</span> <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal; margin-left:auto;">${outputs.length} channel pair(s)</span></h3>`;
-
-    const grid = document.createElement("div");
-    grid.className = "audio-channel-grid";
-
-    outputs.forEach((outputNode) => {
-      const chName = outputNode.getAttribute("name") || "Unknown";
-      const currentSourceId = outputNode.getAttribute("sourceId") || "0";
-
-      const row = document.createElement("div");
-      row.className = "audio-channel-row";
-
-      const label = document.createElement("label");
-      // Show just the channel pair part (e.g. "1/2" from "Aux1 1/2")
-      const pairMatch = chName.match(/(\d+\/\d+)$/);
-      label.textContent = pairMatch ? pairMatch[1] : chName;
-      label.title = chName;
-      row.appendChild(label);
-
-      const select = document.createElement("select");
-
-      audioSources.forEach((src) => {
-        const opt = document.createElement("option");
-        opt.value = src.id;
-        opt.textContent = src.label;
-        if (src.id === currentSourceId) opt.selected = true;
-        select.appendChild(opt);
-      });
-
-      select.addEventListener("change", () => {
-        outputNode.setAttribute("sourceId", select.value);
-        
-      });
-
-      row.appendChild(select);
-      grid.appendChild(row);
+    // Group \outputs\ by the specific output name (e.g. "Aux 1", "MADI 16")
+    const subGroups = new Map();
+    outputs.forEach((chNode) => {
+        const outName = chNode.getAttribute("name") || "";
+        const match = outName.match(/^(.+?)\s+\d+\/\d+$/);
+        const subGroupKey = match ? match[1] : outName;
+        if (!subGroups.has(subGroupKey)) subGroups.set(subGroupKey, []);
+        subGroups.get(subGroupKey).push(chNode);
     });
+    
+    const headerControls = document.createElement("div");
+    headerControls.className = "audio-subgroup-header";
+    headerControls.style.display = "flex";
+    headerControls.style.justifyContent = "space-between";
+    headerControls.style.alignItems = "center";
+    headerControls.style.marginBottom = "15px";
 
-    section.appendChild(grid);
+    const title = document.createElement("h3");
+    title.textContent = groupName;
+    title.style.margin = "0";
+
+    const selector = document.createElement("select");
+    selector.className = "subgroup-selector";
+    selector.style.padding = "6px 12px";
+    selector.style.borderRadius = "4px";
+    selector.style.background = "var(--bg-dark)";
+    selector.style.color = "var(--text-main)";
+    selector.style.border = "1px solid var(--border)";
+    
+    const gridContainer = document.createElement("div");
+    
+    // Populate selector options
+    subGroups.forEach((subOutputs, subGroupKey) => {
+        let dispName = subGroupKey;
+        const auxMatch = subGroupKey.match(/^Aux\s*(\d+)/i);
+        if (auxMatch) {
+            const auxId = 8000 + parseInt(auxMatch[1], 10);
+            const actualName = appState.inputsMap.get(auxId.toString());
+            if (actualName) dispName = actualName;
+        }
+        const option = document.createElement("option");
+        option.value = subGroupKey;
+        option.textContent = dispName;
+        selector.appendChild(option);
+    });
+    
+    headerControls.appendChild(title);
+    if (subGroups.size > 1) {
+        headerControls.appendChild(selector);
+    }
+    section.appendChild(headerControls);
+    section.appendChild(gridContainer);
+    
+    const renderSubGroup = (key) => {
+        gridContainer.innerHTML = "";
+        const grid = document.createElement("div");
+        grid.className = "audio-channel-grid";
+        
+        subGroups.get(key).forEach((chNode) => {
+            const outName = chNode.getAttribute("name");
+            const currentSourceId = chNode.getAttribute("sourceId") || "0";
+            
+            const pairMatch = outName.match(/\s+(\d+\/\d+)$/);
+            const rowLabel = pairMatch ? pairMatch[1] : outName;
+            
+            const row = document.createElement("div");
+            row.className = "audio-channel-row";
+            
+            const label = document.createElement("label");
+            label.textContent = "Ch " + rowLabel;
+            label.title = outName;
+            row.appendChild(label);
+            
+            const select = document.createElement("select");
+            select.onchange = (e) => {
+                chNode.setAttribute("sourceId", e.target.value);
+            };
+            
+            let optionsHTML = "";
+            audioSources.forEach((src) => {
+                const selected = src.id === currentSourceId ? "selected" : "";
+                optionsHTML += '<option value="' + src.id + '" ' + selected + '>' + escapeHTML(src.label) + '</option>';
+            });
+            select.innerHTML = optionsHTML;
+            row.appendChild(select);
+            grid.appendChild(row);
+        });
+        gridContainer.appendChild(grid);
+    };
+    
+    if (subGroups.size > 0) {
+        const firstKey = subGroups.keys().next().value;
+        renderSubGroup(firstKey);
+        selector.addEventListener("change", (e) => {
+            renderSubGroup(e.target.value);
+        });
+    }
+
     panel.appendChild(section);
     panelsContainer.appendChild(panel);
   });
 }
+
 
 // Collect all routable audio sources from AudioMapping > AudioSources > Source
 function collectAudioSources() {
@@ -724,48 +1427,50 @@ function collectAudioSources() {
       const id = src.getAttribute("id");
       let name = src.getAttribute("name") || `Source ${id}`;
       
-      // Map generic "Input X" names to their actual user-defined names
-      const inputMatch = name.match(/^Input\s+(\d+)(.*)$/i);
-      if (inputMatch) {
-        const physicalId = inputMatch[1];
-        const actualName = appState.inputsMap.get(physicalId);
-        if (actualName) {
-          name = `${actualName} ${inputMatch[2].trim()}`.trim();
-        }
-      }
+      if (id) {
+          const physicalId = Math.floor(parseInt(id, 10) / 65536).toString();
+          
+          // Only override the label from inputsMap for actual physical video inputs (<1000)
+          // or aux outputs (8000-8999), and Media Players (3000-3099). 
+          // Do NOT override 10000+ (M/E Program, Preview, etc) because Blackmagic natively 
+          // calls them "Program" instead of "ME 1" in audio contexts.
+          const physInt = parseInt(physicalId);
+          if (physInt < 1000 || (physInt >= 3000 && physInt <= 3999) || (physInt >= 8000 && physInt <= 8999)) {
+            const actualName = appState.inputsMap.get(physicalId);
+            if (actualName) {
+                // If there's a channel pair suffix (e.g. " 1/2"), preserve it
+                const pairMatch = name.match(/\s+\d+\/\d+$/);
+                if (pairMatch) {
+                    name = `${actualName}${pairMatch[0]}`;
+                } else {
+                    name = actualName;
+                }
+            }
+          }
 
-      if (id && !seen.has(id)) {
-        seen.add(id);
-        sources.push({ id, label: name });
+          if (!seen.has(id)) {
+              seen.add(id);
+              sources.push({ id, label: name });
+          }
       }
     });
 
   // If we got sources from AudioSources, return early — they're the authoritative list
   if (sources.length > 0) return sources;
 
-  // Fallback: build from Fairlight + standard inputs
-  const fairlightInputs = appState.xmlDoc.querySelectorAll(
-    "FairlightAudioMixer > Inputs > Input, FairlightAudioMixer Input",
-  );
-  fairlightInputs.forEach((inp) => {
-    const id = inp.getAttribute("id") || inp.getAttribute("index");
-    if (id && !seen.has(id)) {
-      seen.add(id);
-      const name =
-        appState.inputsMap.get(id) ||
-        inp.getAttribute("name") ||
-        `Fairlight Input ${id}`;
-      sources.push({ id, label: name });
-    }
-  });
-
-  appState.xmlDoc.querySelectorAll("Inputs > Input").forEach((inp) => {
-    const id = inp.getAttribute("id");
-    if (id && !seen.has(id)) {
-      seen.add(id);
-      sources.push({ id, label: appState.inputsMap.get(id) || `Input ${id}` });
-    }
-  });
+  // Fallback: use SDK audioRoutingSources (prevents non-audio sources like Color from appearing)
+  const sdkCaps = typeof findModelCapabilities === 'function'
+    ? findModelCapabilities(appState.productName)
+    : (typeof MODEL_CAPABILITIES !== 'undefined' ? MODEL_CAPABILITIES[appState.productName] : null);
+  if (sdkCaps && sdkCaps.audioRoutingSources && sdkCaps.audioRoutingSources.length > 0) {
+    sdkCaps.audioRoutingSources.forEach(src => {
+      const srcId = src.inputId.toString();
+      if (!seen.has(srcId)) {
+        seen.add(srcId);
+        sources.push({ id: srcId, label: src.sourceName });
+      }
+    });
+  }
 
   return sources;
 }
@@ -820,7 +1525,7 @@ function buildMultiview() {
       (appState.generation === "modern" ? "15" : "ProgramTop");
 
     if (appState.generation === "modern") {
-      const layoutId = parseInt(currentLayout) || 15;
+      const layoutId = currentLayout !== null && currentLayout !== "" && !isNaN(currentLayout) ? parseInt(currentLayout) : 15;
       controlsDiv.innerHTML = `
                         <label>Enable Quadrant Split:</label>
                         <div class="quad-toggles">
@@ -859,7 +1564,7 @@ function buildMultiview() {
 
     if (appState.generation === "modern") {
       grid.classList.add("mv-grid-modern");
-      const layoutId = parseInt(currentLayout) || 15;
+      const layoutId = currentLayout !== null && currentLayout !== "" && !isNaN(currentLayout) ? parseInt(currentLayout) : 15;
 
       // ATEM 4x4 Grid mapping logic to Quadrant Bits
       const quadMap = {
@@ -947,7 +1652,8 @@ function updateModernLayout(mvIdx, bitMask, isChecked) {
   const mvNode = appState.xmlDoc.querySelectorAll("MultiViews > MultiView")[
     mvIdx
   ];
-  let currentId = parseInt(mvNode.getAttribute("LayoutID") || 15);
+  const attr = mvNode.getAttribute("LayoutID");
+  let currentId = attr !== null && attr !== "" ? parseInt(attr) : 15;
 
   // Modify the bitmask based on the toggle
   if (isChecked) {
@@ -1024,6 +1730,13 @@ function openMultiviewModal(mvIdx, winIdx) {
   // Build Inputs Group
   const inGroup = document.createElement("optgroup");
   inGroup.label = "--- Physical & Virtual Inputs ---";
+
+  // Ensure Black (0) is always available as a selectable source
+  const blackOption = document.createElement("option");
+  blackOption.value = "0";
+  blackOption.text = "[0] Black";
+  inGroup.appendChild(blackOption);
+
   const inputs = appState.xmlDoc.querySelectorAll("Inputs > Input");
   inputs.forEach((inp) => {
     const id = inp.getAttribute("id");
@@ -1039,25 +1752,20 @@ function openMultiviewModal(mvIdx, winIdx) {
   // Build Outputs Group
   const outGroup = document.createElement("optgroup");
   outGroup.label = "--- Outputs & Internal Sources ---";
-  const outputs = appState.xmlDoc.querySelectorAll("Outputs > Output");
-  outputs.forEach((out) => {
-    const id = out.getAttribute("id");
+  
+  for (const [id, label] of appState.inputsMap.entries()) {
+    if (parseInt(id) < 1000) continue; // Skip physical inputs (already in Inputs group)
     
-    // ATEM compact switchers (Mini, SDI, Extreme) cannot route MV into MV at all.
-    // Also universally, a Multiview engine cannot be routed into itself.
-    const isCompactFamily = appState.productName.includes("Mini") || appState.productName.includes("Extreme") || appState.productName.includes("SDI");
+    // According to the SDK, Multiviews do not have SourceAvailability.Multiviewer.
+    // They cannot be routed into a Multiview on ANY ATEM model.
     const isMvSource = parseInt(id) >= 9000 && parseInt(id) < 9100;
-    
-    if (isMvSource) {
-      if (isCompactFamily) return; // Hide all MVs for compact models
-      if (parseInt(id) === 9001 + mvIdx) return; // Prevent recursive routing (MV1 into MV1)
-    }
+    if (isMvSource) continue;
 
     const option = document.createElement("option");
     option.value = id;
-    option.text = `[${id}] ${appState.inputsMap.get(id)}`;
+    option.text = `[${id}] ${label}`;
     outGroup.appendChild(option);
-  });
+  }
   select.appendChild(outGroup);
 
   // Pre-select the current source and determine if it's a large window
@@ -1066,7 +1774,8 @@ function openMultiviewModal(mvIdx, winIdx) {
 
   let isLargeWindow = false;
   if (appState.generation === "modern") {
-    const layoutId = parseInt(mvNode.getAttribute("LayoutID") || 15);
+    const attr = mvNode.getAttribute("LayoutID");
+    const layoutId = attr !== null && attr !== "" ? parseInt(attr) : 15;
     const quadMap = { 0:0, 1:0, 4:0, 5:0, 2:1, 3:1, 6:1, 7:1, 8:2, 9:2, 12:2, 13:2, 10:3, 11:3, 14:3, 15:3 };
     const primaryBoxes = [0, 2, 8, 10];
     const quadIndex = quadMap[winIdx];
@@ -1077,21 +1786,6 @@ function openMultiviewModal(mvIdx, winIdx) {
     }
   } else {
     isLargeWindow = (winIdx === 0 || winIdx === 1);
-  }
-
-  // Build Status Overlays Group (Mini/Extreme/SDI only)
-  const isCompactFamily = appState.productName.includes("Mini") || appState.productName.includes("Extreme") || appState.productName.includes("SDI");
-  if (isCompactFamily && !isLargeWindow) {
-    const statusGroup = document.createElement("optgroup");
-    statusGroup.label = "--- Status Overlays ---";
-    const statuses = ["9101", "9102", "9103"];
-    statuses.forEach((id) => {
-      const option = document.createElement("option");
-      option.value = id;
-      option.text = `[${id}] ${appState.inputsMap.get(id)}`;
-      statusGroup.appendChild(option);
-    });
-    select.appendChild(statusGroup);
   }
 
   if (winNode) select.value = winNode.getAttribute("input");
@@ -1107,17 +1801,29 @@ function saveMultiviewSource() {
   const mvNode = appState.xmlDoc.querySelectorAll("MultiViews > MultiView")[
     appState.activeMvIndex
   ];
-  const winNode = mvNode.querySelector(
+  if (!mvNode) {
+    document.getElementById("mv-modal").close();
+    return;
+  }
+
+  let winNode = mvNode.querySelector(
     `Windows > Window[index="${appState.activeWindowIndex}"]`,
   );
 
-  if (winNode) {
-    winNode.setAttribute("input", newVal);
-    buildMultiview(); // Re-render the grid
-    switchMultiviewTab(appState.activeMvIndex); // Ensure we stay on the same Multiview tab
+  if (!winNode) {
+    let windowsNode = mvNode.querySelector("Windows");
+    if (!windowsNode) {
+      windowsNode = appState.xmlDoc.createElement("Windows");
+      mvNode.appendChild(windowsNode);
+    }
+    winNode = appState.xmlDoc.createElement("Window");
+    winNode.setAttribute("index", appState.activeWindowIndex.toString());
+    windowsNode.appendChild(winNode);
   }
 
-  
+  winNode.setAttribute("input", newVal);
+  buildMultiview(); // Re-render the grid
+  switchMultiviewTab(appState.activeMvIndex); // Ensure we stay on the same Multiview tab
 
   document.getElementById("mv-modal").close();
 }
@@ -1235,6 +1941,16 @@ function getOrCreateStreamNode() {
   let streamNode = appState.xmlDoc.querySelector("Profile > Output > LiveStream");
   if (!streamNode) {
     streamNode = appState.xmlDoc.createElement("LiveStream");
+    streamNode.setAttribute("serviceName", "YouTube RTMP");
+    streamNode.setAttribute("url", "rtmps://a.rtmps.youtube.com/live2");
+    streamNode.setAttribute("key", "");
+    streamNode.setAttribute("streamIdExtensions", "");
+    streamNode.setAttribute("lowLatency", "False");
+    streamNode.setAttribute("streamDownConvertMode", "None");
+    const creds = appState.xmlDoc.createElement("Credentials");
+    creds.setAttribute("username", "");
+    creds.setAttribute("password", "");
+    streamNode.appendChild(creds);
     outputNode.appendChild(streamNode);
   }
   return streamNode;
@@ -1246,6 +1962,10 @@ function getOrCreateRecordNode() {
   let recordNode = appState.xmlDoc.querySelector("Profile > Output > Record");
   if (!recordNode) {
     recordNode = appState.xmlDoc.createElement("Record");
+    const safePrefix = (appState.productName || "ATEM").replace(/[^a-zA-Z0-9]/g, "_");
+    recordNode.setAttribute("filename", safePrefix);
+    recordNode.setAttribute("recordInAllCameras", "False");
+    recordNode.setAttribute("recordAllISOInputs", appState.hasIso ? "True" : "False");
     outputNode.appendChild(recordNode);
   }
   return recordNode;
@@ -1401,14 +2121,50 @@ function updateXMLCounterAttr(index, attrName, value) {
   }
 }
 
-// --- EXPORT ---
+function formatXml(xml) {
+    // 1. Strip existing whitespace-only text nodes between tags so we can format cleanly
+    let formatted = xml.replace(/>\s+</g, '><');
+    
+    // 2. Insert newlines between tags
+    formatted = formatted.replace(/(>)(<)(\/*)/g, '$1\r\n$2$3');
+    
+    // 3. Format with indentation (Blackmagic natively uses 4 spaces)
+    const PADDING = '    '; 
+    let pad = 0;
+    formatted = formatted.split('\r\n').map(node => {
+        let indent = 0;
+        if (node.match(/.+<\/\w[^>]*>$/)) {
+            indent = 0;
+        } else if (node.match(/^<\/\w/) && pad > 0) {
+            pad -= 1;
+        } else if (node.match(/^<\w[^>]*[^\/]>.*$/)) {
+            indent = 1;
+        } else {
+            indent = 0;
+        }
+        const padding = PADDING.repeat(pad);
+        pad += indent;
+        return padding + node;
+    }).join('\r\n');
+    
+    // 4. Ensure XML declaration exists at the top
+    if (!formatted.startsWith('<?xml')) {
+        formatted = '<?xml version="1.0" encoding="UTF-8"?>\r\n' + formatted;
+    }
+    
+    return formatted;
+}
+
 function exportXML() {
   if (!appState.xmlDoc) {
     alert("Please upload an XML file first.");
     return;
   }
   const serializer = new XMLSerializer();
-  const xmlString = serializer.serializeToString(appState.xmlDoc);
+  let xmlString = serializer.serializeToString(appState.xmlDoc);
+  
+  // Format the XML to be readable like Blackmagic's export (4 spaces, CRLF)
+  xmlString = formatXml(xmlString);
 
   const blob = new Blob([xmlString], { type: "text/xml" });
   const url = URL.createObjectURL(blob);
@@ -1420,3 +2176,249 @@ function exportXML() {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+// ==========================================================================
+// --- SECTION: RESET CONTROLLERS & TOAST NOTIFICATION ---
+// ==========================================================================
+
+/**
+ * Returns a pristine clone of the initially loaded/generated XML Document
+ * to support granular rollback on any tab.
+ * @returns {Document|null}
+ */
+function getOriginalDoc() {
+  if (!appState.originalXmlString) return null;
+  const parser = new DOMParser();
+  return parser.parseFromString(appState.originalXmlString, "text/xml");
+}
+
+/**
+ * Resets Input labels, Output labels, and Audio mixOptions back to the initial XML state.
+ */
+function resetLabelsTab() {
+  const origDoc = getOriginalDoc();
+  if (!origDoc || !appState.xmlDoc) return;
+
+  // Restore Inputs
+  const origInputs = origDoc.querySelector("Inputs");
+  const currInputs = appState.xmlDoc.querySelector("Inputs");
+  if (origInputs && currInputs) {
+    currInputs.replaceWith(appState.xmlDoc.importNode(origInputs, true));
+  }
+
+  // Restore Outputs
+  const origOutputs = origDoc.querySelector("Outputs");
+  const currOutputs = appState.xmlDoc.querySelector("Outputs");
+  if (origOutputs && currOutputs) {
+    currOutputs.replaceWith(appState.xmlDoc.importNode(origOutputs, true));
+  }
+
+  // Restore Audio inputs mixOptions
+  if (appState.hasFairlight) {
+    const origFl = origDoc.querySelector("FairlightAudioMixer AudioInputs");
+    const currFl = appState.xmlDoc.querySelector("FairlightAudioMixer AudioInputs");
+    if (origFl && currFl) {
+      currFl.replaceWith(appState.xmlDoc.importNode(origFl, true));
+    }
+  } else {
+    const origMix = origDoc.querySelector("AudioMixer AudioInputs");
+    const currMix = appState.xmlDoc.querySelector("AudioMixer AudioInputs");
+    if (origMix && currMix) {
+      currMix.replaceWith(appState.xmlDoc.importNode(origMix, true));
+    }
+  }
+
+  cacheInputNames();
+  cacheAudioMixOptions();
+  buildLabelsTable();
+  buildAuxMatrix();
+  buildMultiview();
+  buildAudioMapping();
+  showToast("Input and Output labels reset to initial state");
+}
+
+/**
+ * Resets Auxiliary output routing crosspoints back to the initial XML state.
+ */
+function resetAuxTab() {
+  const origDoc = getOriginalDoc();
+  if (!origDoc || !appState.xmlDoc) return;
+
+  const origAux = origDoc.querySelector("Auxiliaries");
+  const currAux = appState.xmlDoc.querySelector("Auxiliaries");
+  if (origAux && currAux) {
+    currAux.replaceWith(appState.xmlDoc.importNode(origAux, true));
+  }
+  buildAuxMatrix();
+  showToast("Auxiliary matrix routing reset to initial state");
+}
+
+/**
+ * Resets Multiview layout and window source assignments back to the initial XML state.
+ */
+function resetMultiviewTab() {
+  const origDoc = getOriginalDoc();
+  if (!origDoc || !appState.xmlDoc) return;
+
+  const origMvs = origDoc.querySelector("MultiViews");
+  const currMvs = appState.xmlDoc.querySelector("MultiViews");
+  if (origMvs && currMvs) {
+    currMvs.replaceWith(appState.xmlDoc.importNode(origMvs, true));
+  }
+  buildMultiview();
+  showToast("Multiview configuration reset to initial state");
+}
+
+/**
+ * Resets Fairlight / MADI audio output routing back to the initial XML state.
+ */
+function resetAudioTab() {
+  const origDoc = getOriginalDoc();
+  if (!origDoc || !appState.xmlDoc) return;
+
+  const origMap = origDoc.querySelector("AudioMapping");
+  const currMap = appState.xmlDoc.querySelector("AudioMapping");
+  if (origMap && currMap) {
+    currMap.replaceWith(appState.xmlDoc.importNode(origMap, true));
+  }
+  buildAudioMapping();
+  showToast("Audio output mapping reset to initial state");
+}
+
+/**
+ * Resets Live Streaming and Recording settings back to initial XML state.
+ */
+function resetStreamRecordTab() {
+  const origDoc = getOriginalDoc();
+  if (!origDoc || !appState.xmlDoc) return;
+
+  const origLs = origDoc.querySelector("Profile > Output > LiveStream");
+  const currLs = appState.xmlDoc.querySelector("Profile > Output > LiveStream");
+  if (origLs && currLs) {
+    currLs.replaceWith(appState.xmlDoc.importNode(origLs, true));
+  }
+
+  const origRec = origDoc.querySelector("Profile > Output > Record");
+  const currRec = appState.xmlDoc.querySelector("Profile > Output > Record");
+  if (origRec && currRec) {
+    currRec.replaceWith(appState.xmlDoc.importNode(origRec, true));
+  }
+
+  buildStreamRecordPanel();
+  showToast("Stream & Record settings reset to initial state");
+}
+
+/**
+ * Resets On-Screen Counters (clocks/timers) back to initial XML state.
+ */
+function resetCountersTab() {
+  const origDoc = getOriginalDoc();
+  if (!origDoc || !appState.xmlDoc) return;
+
+  const origCnt = origDoc.querySelector("Counters");
+  const currCnt = appState.xmlDoc.querySelector("Counters");
+  if (origCnt && currCnt) {
+    currCnt.replaceWith(appState.xmlDoc.importNode(origCnt, true));
+  }
+  buildCountersPanel();
+  showToast("Counters reset to initial state");
+}
+
+/**
+ * Resets the entire application session, unloading the active XML and restoring
+ * the initial landing state without requiring a browser reload.
+ */
+function resetEntireSession() {
+  if (appState.xmlDoc && !confirm("Are you sure you want to unload the current switcher configuration and start over?")) {
+    return;
+  }
+
+  // Clear application state
+  appState.xmlDoc = null;
+  appState.originalXmlString = null;
+  appState.productName = "";
+  appState.tier = "";
+  appState.generation = "legacy";
+  appState.audioEngine = "legacy";
+  appState.superSourceCount = 0;
+  appState.multiviewCount = 1;
+  appState.mvLayoutType = "text";
+  appState.hasSuperSource = false;
+  appState.hasFairlight = false;
+  appState.hasAudioMapping = false;
+  appState.hasMadi = false;
+  appState.hasIso = false;
+  appState.hasNetworkIngest = false;
+  appState.inputsMap.clear();
+  appState.mixOptionsMap.clear();
+  appState.activeMvIndex = null;
+  appState.activeWindowIndex = null;
+  appState.isLive = false;
+
+  // Reset Header
+  document.getElementById("active-switcher-name").innerText = "No XML Loaded";
+  const resetBtn = document.getElementById("btn-reset-session");
+  if (resetBtn) resetBtn.style.display = "none";
+
+  // Reset Overview UI elements
+  const dropZone = document.getElementById("drop-zone");
+  if (dropZone) {
+    dropZone.style.display = "block";
+    dropZone.classList.remove("drop-zone-active");
+    dropZone.innerHTML = `
+      <h2>Drag &amp; Drop ATEM XML Here</h2>
+      <p>Or click to browse files</p>
+      <input type="file" id="file-input" accept=".xml" style="display:none;">
+    `;
+    const fileInput = document.getElementById("file-input");
+    dropZone.onclick = () => fileInput.click();
+    fileInput.onchange = (e) => {
+      if (e.target.files.length) processFile(e.target.files[0]);
+    };
+  }
+
+  const createZone = document.querySelector(".create-scratch-zone");
+  if (createZone) createZone.style.display = "block";
+
+  const usageCard = document.querySelector(".card-usage");
+  if (usageCard) usageCard.style.display = "block";
+
+  const systemInfo = document.getElementById("system-info");
+  if (systemInfo) systemInfo.style.display = "none";
+
+  // Disable nav buttons that require XML
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    if (btn.getAttribute("data-target") !== "tab-overview") {
+      btn.disabled = true;
+    }
+  });
+
+  // Switch to Overview tab
+  const overviewBtn = document.querySelector('[data-target="tab-overview"]');
+  if (overviewBtn) overviewBtn.click();
+
+  showToast("Session reset — ready for new XML");
+}
+
+/**
+ * Displays a non-intrusive floating toast notification.
+ * @param {string} message
+ */
+function showToast(message) {
+  let toast = document.getElementById("app-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "app-toast";
+    toast.className = "app-toast";
+    document.body.appendChild(toast);
+  }
+  toast.innerText = message;
+  toast.classList.add("show");
+  clearTimeout(toast._timeout);
+  toast._timeout = setTimeout(() => {
+    toast.classList.remove("show");
+  }, 2500);
+}
+
+
+
